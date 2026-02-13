@@ -1,0 +1,84 @@
+{
+  "id": "g_b798475aec",
+  "name": "Board 01",
+  "nodeOrder": [
+    "n_l4x9he",
+    "n_3imird",
+    "n_owur6g"
+  ],
+  "nodes": [
+    {
+      "id": "n_l4x9he",
+      "type": "html-text",
+      "x": 120,
+      "y": 120,
+      "w": 260,
+      "h": 90,
+      "text": "Drop a component to start",
+      "svg": null,
+      "svgUrl": null,
+      "color": null,
+      "pulse": false,
+      "data": null,
+      "props": null,
+      "component": null,
+      "render": null,
+      "loader": null,
+      "meta": null
+    },
+    {
+      "id": "n_3imird",
+      "type": "html",
+      "x": 460,
+      "y": 180,
+      "w": 320,
+      "h": 160,
+      "text": "",
+      "svg": null,
+      "svgUrl": null,
+      "color": null,
+      "pulse": false,
+      "data": {
+        "choice": "Nova"
+      },
+      "props": {
+        "label": "Pick a mode",
+        "options": [
+          "Nova",
+          "Ion",
+          "Delta"
+        ]
+      },
+      "component": "OptionPicker",
+      "render": null,
+      "loader": null,
+      "meta": null
+    },
+    {
+      "id": "n_owur6g",
+      "type": "html",
+      "x": 120,
+      "y": 320,
+      "w": 320,
+      "h": 160,
+      "text": "",
+      "svg": null,
+      "svgUrl": null,
+      "color": null,
+      "pulse": false,
+      "data": {},
+      "props": {
+        "title": "Audio Capture"
+      },
+      "component": "AudioPlayer",
+      "render": null,
+      "loader": null,
+      "meta": null
+    }
+  ],
+  "edges": [],
+  "notifications": [],
+  "meta": null,
+  "createdAt": 1770901712369,
+  "updatedAt": 1770901712369
+}

@@ -1,0 +1,178 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Elenweave - Public Demo</title>
+    <meta name="description" content="Elenweave public demo app for canvas workspaces." />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('elenweave_theme');
+          var theme = (saved === 'dark' || saved === 'blueprint') ? saved : 'blueprint';
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch (err) {
+          document.documentElement.setAttribute('data-theme', 'blueprint');
+        }
+      })();
+    </script>
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/elenweave@0.1.1/dist/styles.css" />
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="app-panel">
+        <a class="app-brand" href="/" aria-label="Elenweave home">
+          <img class="brand-mark" src="../logo.webp" alt="Elenweave logo" />
+          <div>
+            <h1>Elenweave</h1>
+            <p>Public Demo Workspace</p>
+          </div>
+        </a>
+
+        <section class="panel-section panel-section--boards">
+          <div class="btn-row">
+            <button class="btn accent" id="btnNew" type="button">New Board</button>
+            <button class="btn ghost collapse-btn" id="panelToggle" type="button">Collapse</button>
+            <!-- <button class="btn" id="btnPrev" type="button">Prev</button> -->
+            <!-- <button class="btn" id="btnNext" type="button">Next</button> -->
+          </div>
+          <div class="board-list" id="boardList" aria-label="Boards"></div>
+        </section>
+
+        <section class="panel-section panel-section--ai">
+          <div class="section-title">AI</div>
+          <div class="btn-row single">
+            <button class="btn" id="btnModelMatrix" type="button">AI Model Config</button>
+          </div>
+          <div class="btn-row single">
+            <button class="btn" id="btnRealtime" type="button">Realtime Off</button>
+          </div>
+        </section>
+
+        <section class="panel-section panel-section--tools">
+          <div class="section-title">Tools</div>
+          <div class="btn-row single">
+            <button class="btn toggle" id="btnLink" type="button">Link Mode</button>
+          </div>
+          <div class="btn-row single">
+            <button class="btn" id="edgeToggle" type="button">Edges: Straight</button>
+          </div>
+          <div class="btn-row single">
+            <button class="btn" id="themeToggle" type="button">Theme</button>
+          </div>
+          <div class="btn-row">
+            <button class="btn" id="btnExport" type="button">Export Board</button>
+            <button class="btn ghost" id="btnImport" type="button">Import Board</button>
+          </div>
+          <!-- <div class="helper-text">
+            Export downloads a JSON board file. Import opens a JSON file picker.
+          </div> -->
+        </section>
+
+        
+      </aside>
+
+      <main class="app-stage">
+        <div class="canvas-shell">
+          <button class="panel-expand" id="panelExpand" type="button">Expand</button>
+          <div class="hint-center" id="hintCenter" aria-label="Hints">
+            <button class="hint-icon" id="hintToggle" type="button" aria-label="Toggle hints">?</button>
+            <div class="hint-panel" id="hintBody">
+              <ul>
+                <li>Shift + Drag: link nodes</li>
+                <li>Space + Drag: pan</li>
+                <li>Wheel: zoom</li>
+                <li>Double-click: edit text nodes</li>
+                <li>Delete key: delete selected node or edge</li>
+              </ul>
+            </div>
+          </div>
+
+          <canvas id="ew-canvas" aria-label="Elenweave canvas"></canvas>
+
+          <div class="input-bar" id="inputBar">
+            <div class="input-group input-group--component">
+              <div class="input-select">
+                <label for="componentPicker">Component</label>
+                <select id="componentPicker"></select>
+              </div>
+            </div>
+            <div class="input-group input-group--meta" id="metaGroup">
+              <div class="input-fields" id="inputFields">
+                <div class="node-fields" id="nodeFields"></div>
+                <div class="edge-fields" id="edgeFields" aria-hidden="true">
+                  <label for="edgeLabelInput">Edge label</label>
+                  <div class="edge-row">
+                    <input id="edgeLabelInput" type="text" placeholder="Edge label" />
+                    <button class="input-btn" id="edgeLabelBtn" type="button">Set</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="input-group input-group--asset" id="assetGroup">
+              <div class="asset-fields" id="assetFields"></div>
+              <div class="asset-actions">
+                <button class="input-btn secondary" id="recordBtn" type="button" title="Record audio">● Record</button>
+                <button class="input-btn primary" id="sendBtn" type="button">Add</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="status" id="status">Ready.</div>
+        </div>
+      </main>
+    </div>
+
+    <input type="file" id="importFile" accept="application/json" hidden />
+    <div class="modal-backdrop" id="modelModal" role="dialog" aria-modal="true" aria-label="Model matrix" hidden>
+        <div class="modal">
+            <div class="modal-header">
+                <div>
+                    <div class="modal-title">Model Matrix</div>
+                    <div class="modal-sub">Choose a provider and store an API key locally.</div>
+                </div>
+                <button class="btn ghost modal-close" id="modelModalClose" type="button">Close</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-field">
+                    <label for="providerSelect">Provider</label>
+                    <div class="select-wrap">
+                        <select id="providerSelect">
+                            <option value="openai">OpenAI</option>
+                            <option value="gemini">Gemini</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-field">
+                    <label for="apiKeyInput">API Key</label>
+                    <input id="apiKeyInput" type="password" placeholder="Paste API key" autocomplete="off" />
+                    <div class="field-note" id="apiKeyNote">Stored locally in this browser.</div>
+                </div>
+                <div class="modal-field">
+                    <label for="modelInput">Default Model</label>
+                    <input id="modelInput" type="text" placeholder="Model name" autocomplete="off" />
+                    <div class="field-note" id="modelNote">Defaults: gpt-5-mini (OpenAI), gemini-3-flash-preview (Gemini).</div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn ghost" id="apiKeyClear" type="button">Clear Key</button>
+                    <button class="btn accent" id="apiKeySave" type="button">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/elenweave@0.1.2/dist/elenweave.iife.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
