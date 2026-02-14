@@ -1,123 +1,86 @@
 # Local App Server
 
-This app includes a lightweight Node.js server so you can run the Elenweave demo locally and connect it to your own systems. The server hosts the UI and exposes JSON endpoints for board storage.
+This app includes a lightweight Node.js server that hosts the UI and exposes a project-scoped board API.
 
 ## Where it lives
 
-`pages/app/server/index.js`
-
-All server data is stored under:
-
-`pages/app/data/`
-
-## What it does
-
-- Serves the static app from `pages/`
-- Provides board APIs (`/api/boards`)
-- Persists boards as JSON files on disk
+`server/index.js`
 
 ## Running it
 
-From the repo root:
+From repo root:
 
 ```bash
 npm run server
 ```
 
-Then open:
+Open:
 
-```
-http://127.0.0.1:8787/app/index.html
+```text
+http://127.0.0.1:8787/
 ```
 
-You can change host/port with environment variables:
+Optional overrides:
 
 ```bash
 HOST=0.0.0.0 PORT=8080 npm run server
+ELENWEAVE_DATA_DIR=/path/to/shared-store npm run server
 ```
 
-## Static file routing
+## Storage location
 
-The server maps URL paths directly to `pages/`:
+Default data root is shared per user:
 
-- `/app/index.html` → `pages/app/index.html`
-- `/app/app.css` → `pages/app/app.css`
-- `/app/app.js` → `pages/app/app.js`
+- Windows: `%USERPROFILE%\\.elenweave`
+- macOS/Linux: `~/.elenweave`
 
-The root path `/` redirects to `/app/index.html`.
+Override with `ELENWEAVE_DATA_DIR`.
 
-## Storage format
+Layout:
 
-Boards are stored as JSON files in:
-
-```
-pages/app/data/boards/<boardId>.json
-```
-
-Board index is stored in:
-
-```
-pages/app/data/index.json
+```text
+<root>/
+  index.json
+  locks/
+  projects/
+    <projectId>/
+      project.json
+      assets.json
+      boards/
+        <boardId>.json
+      assets/
+        <assetId>.<ext>
 ```
 
 ## API reference
 
-### `GET /api/boards`
+### Projects
 
-Returns the board list:
+- `GET /api/projects`
+- `POST /api/projects`
+- `GET /api/projects/:projectId`
+- `PATCH /api/projects/:projectId`
+- `DELETE /api/projects/:projectId`
 
-```json
-{ "boards": [{ "id": "...", "name": "...", "createdAt": 0, "updatedAt": 0 }] }
-```
+### Boards (project scoped)
 
-### `POST /api/boards`
+- `GET /api/projects/:projectId/boards`
+- `POST /api/projects/:projectId/boards`
+- `GET /api/projects/:projectId/boards/:boardId`
+- `PATCH /api/projects/:projectId/boards/:boardId`
+- `PUT /api/projects/:projectId/boards/:boardId`
+- `DELETE /api/projects/:projectId/boards/:boardId`
+- `POST /api/projects/:projectId/boards/:boardId/nodes`
 
-Create a board:
+### Assets (project scoped)
 
-```json
-{ "name": "My board" }
-```
-
-### `PATCH /api/boards/:id`
-
-Rename a board:
-
-```json
-{ "name": "New name" }
-```
-
-### `GET /api/boards/:id`
-
-Load a board:
-
-```json
-{ "board": { "id": "...", "name": "...", "nodes": [], "edges": [] } }
-```
-
-### `PUT /api/boards/:id`
-
-Save a full board payload:
-
-```json
-{ "board": { "id": "...", "nodes": [], "edges": [] } }
-```
-
-### `DELETE /api/boards/:id`
-
-Delete a board.
-
-### `POST /api/boards/:id/nodes`
-
-Add nodes and edges:
-
-```json
-{
-  "nodes": [{ "id": "node-1", "type": "html-text", "data": { "text": "Hello" } }],
-  "edges": [{ "id": "edge-1", "source": "node-1", "target": "node-2" }]
-}
-```
+- `POST /api/projects/:projectId/assets` (JSON body: `filename`, `mimeType`, `base64`, optional `category`)
+- `GET /api/projects/:projectId/assets/:assetId`
+- `DELETE /api/projects/:projectId/assets/:assetId`
 
 ## Notes
 
-- The client automatically switches to server mode when `/api/boards` responds.
-- Assets (images/audio/code blobs) are still stored in the browser’s IndexedDB for now.
+- When serving `app/index.html`, the server injects `window.__ELENWEAVE_RUNTIME__ = { storageMode: "server", serverBase: "" }`.
+- Board and project IDs use 16-character URL-safe IDs.
+- The server uses lock files + atomic writes for multi-process safety.
+- In server mode, boards and assets are file-backed source-of-truth.

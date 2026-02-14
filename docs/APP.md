@@ -1,124 +1,98 @@
 # App Architecture Overview
 
-This document describes how the `pages/app` demo works, what each file does, and how data is stored.
+This document describes how the app works, what each file does, and how data is stored in client and server modes.
 
 ## High-level architecture
 
-The app is a client-only Elenweave workspace with optional local server support.
+The app is an Elenweave workspace with optional local server persistence.
 
-- **UI**: `pages/app/index.html` + `pages/app/app.css`
-- **App logic**: `pages/app/app.js`
+- **UI**: `app/index.html` + `app/app.css`
+- **App logic**: `app/app.js`
 - **Custom components**: local modules registered into the Elenweave view
-- **Storage**: IndexedDB (client mode) or file-backed storage (server mode)
-- **AI**: `pages/app/llm_clients.js`, `pages/app/realtime_audio.js`
+- **Storage**: strict runtime mode (`client` IndexedDB-only, or `server` API/file-backed-only)
+- **AI**: `app/llm_clients.js`, `app/realtime_audio.js`
 
 ## File map
 
 ### Core UI
 
-- `pages/app/index.html`
-  - App shell markup, sidebar, input bar, modals.
+- `app/index.html`
+  - App shell markup (projects, boards, tools, input bar, modals).
   - Loads `app.css` and `app.js`.
 
-- `pages/app/app.css`
-  - App-specific styling (layout, sidebar, input bar, buttons, light/dark/blueprint themes).
+- `app/app.css`
+  - App-specific styling (panel layout, board/project lists, input bar, themes).
 
 ### Core logic
 
-- `pages/app/app.js`
-  - Boots the Elenweave workspace and view.
-  - Registers components (text, inputs, charts, media, markdown).
-  - Manages board list, board switching, import/export.
-  - Handles AI prompts, attachments, node creation, and layout.
-  - Handles notifications and UI state persistence.
-  - Implements server-mode adapter (auto switches to `/api/boards` when present).
+- `app/app.js`
+  - Boots workspace and view.
+  - Registers components (text, forms, charts, media, markdown, SVG, mermaid).
+  - Manages **project list**, **board list**, switching, import/export.
+  - Handles AI prompt flow, attachments, node creation, and layout.
+  - Handles UI state persistence and notifications.
+  - Uses `window.__ELENWEAVE_RUNTIME__` to select strict storage mode at boot.
 
 ### Custom components
 
-- `pages/app/markdown-block.js`
-  - App-only markdown renderer component used for AI output.
-- `pages/app/svg-block.js`
-  - App-only SVG renderer component.
-- `pages/app/mermaid-block.js`
-  - App-only Mermaid renderer component.
+- `app/markdown-block.js`
+- `app/svg-block.js`
+- `app/mermaid-block.js`
 
 ### AI + realtime
 
-- `pages/app/llm_clients.js`
-  - LLM call helpers for OpenAI + Gemini.
-  - Supports text + multimodal requests.
-
-- `pages/app/realtime_audio.js`
-  - Gemini realtime audio connection and tool-call handling.
+- `app/llm_clients.js`
+  - OpenAI/Gemini request helpers (text + multimodal).
+- `app/realtime_audio.js`
+  - Gemini realtime audio + tool-call handling.
 
 ### Local server
 
-- `pages/app/server/index.js`
-  - Serves `/app/index.html` and assets from `pages/`.
-  - Provides REST endpoints for boards.
-  - Persists boards to disk under `pages/app/data`.
+- `server/index.js`
+  - Serves static app files.
+  - Provides project + board REST APIs.
+  - Persists data to shared user-level storage (`~/.elenweave` by default, override with `ELENWEAVE_DATA_DIR`).
 
-### Docs
+## Data storage
 
-- `pages/app/AI_FEATURES.md`
-  - Summary of AI-related features in this app.
-- `pages/app/SERVER.md`
-  - How the local server works and how to run it.
+### Client mode (IndexedDB)
 
-## Data storage (client mode)
+- DB: `elenweave_assets`
+- Stores:
+  - `assets`: blob-backed files
+  - `workspace`: workspace index + graph payloads
 
-Client mode uses IndexedDB:
+`workspace_index` includes:
+- `activeProjectId`
+- `activeGraphId`
+- `projects[]`
+- `boards[]`
 
-- **Database**: `elenweave_assets`
-- **Stores**:
-  - `assets`: blobs for image/audio/video/text files
-  - `workspace`: board index + graph payloads
+### Server mode (file-backed, project scoped)
 
-Key records:
+The app uses project-scoped APIs:
 
-- `workspace` store:
-  - `workspace_index`:
-    - `{ boards: [{ id, name, updatedAt }], activeGraphId }`
-  - `graph_<id>`:
-    - full board payload: nodes, edges, meta, notifications
+- `/api/projects`
+- `/api/projects/:projectId/boards`
+- `/api/projects/:projectId/boards/:boardId`
+- `/api/projects/:projectId/boards/:boardId/nodes`
+- `/api/projects/:projectId/assets`
+- `/api/projects/:projectId/assets/:assetId`
 
-- `assets` store:
-  - `{ id, name, type, category, blob, createdAt }`
+In server mode, board/workspace/assets are server source-of-truth only.
 
-Other persistence:
-
-- `localStorage`:
-  - UI state (theme, edge style, panel collapse)
-  - AI provider + model choice
-  - API keys (per provider)
-  - active board id (used by server mode)
-
-Board metadata:
-
-- `graph.meta` stores AI history and board-level settings.
-- `notifications` live inside each board payload.
-
-## Data storage (server mode)
-
-Server mode stores board data on disk:
-
-```
-pages/app/data/
-  boards/<boardId>.json
-  index.json
-```
-
-The client auto-detects the server via `/api/boards` and switches
-board load/save/rename to the API. Assets still stay in IndexedDB for now.
+Server-side disk layout is documented in `docs/SERVER.md`.
 
 ## Runtime flow
 
-1) App boots and restores board list.
-2) Loads the active board and renders it into the view.
-3) User actions update the view; persistence is scheduled.
-4) AI actions generate node plans and add nodes/edges to the board.
+1. App boots with `window.__ELENWEAVE_RUNTIME__` (`storageMode: "client" | "server"`).
+2. In server mode, it loads projects, selects/creates active project, then loads boards for that project.
+3. Loads active board payload into the view.
+4. User actions mutate graph state; persistence is scheduled.
+5. AI actions return plans that add/update nodes and edges.
 
 ## Notes
 
-- The demo is app-only. It does not modify the core Elenweave library.
-- The server is optional. If not running, the app uses IndexedDB.
+- The app layer does not modify the core Elenweave library.
+- Server mode does not fallback to IndexedDB for workspace/boards/assets.
+- Client mode does not call server APIs.

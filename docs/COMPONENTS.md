@@ -1,10 +1,10 @@
 # App Components Guide
 
-This doc lists all components available in `pages/app`, how to use them, and how to add new ones.
+This doc lists all components available in `app`, how to use them, and how to add new ones.
 
 ## How components are used
 
-Components are configured in `pages/app/app.js` inside `COMPONENT_CONFIG`.
+Components are configured in `app/app.js` inside `COMPONENT_CONFIG`.
 Each entry defines:
 
 - `key` (unique id)
@@ -131,7 +131,7 @@ These are registered in `app.js` and described in `CHART_COMPONENT_SPECS`.
 
 1) **Import or implement it**
    - For core components, import from the Elenweave CDN.
-   - For app-only components, create a local file in `pages/app/`.
+   - For app-only components, create a local file in `app/`.
 
 2) **Register it**
    - In `app.js`, call:

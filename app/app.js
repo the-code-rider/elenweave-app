@@ -34,6 +34,8 @@ if (!ElenweaveWorkspace || !ElenweaveView) {
 }
 
 const els = {
+  projectSelect: document.getElementById('projectSelect'),
+  btnNewProject: document.getElementById('btnNewProject'),
   boardList: document.getElementById('boardList'),
   // btnRename: document.getElementById('btnRename'),
   // btnPrev: document.getElementById('btnPrev'),
@@ -99,18 +101,22 @@ const LARGE_TEXT_ASSET_BYTES = 200 * 1024;
 const TEXT_PREVIEW_BYTES = 12000;
 const REALTIME_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025';
 const ACTIVE_BOARD_KEY = 'elenweave_active_board';
-const SERVER_PROBE_TIMEOUT = 900;
-const SERVER_BASE = (() => {
+const ACTIVE_PROJECT_KEY = 'elenweave_active_project';
+const RUNTIME_CONFIG = (() => {
   try {
-    if (window.__ELENWEAVE_SERVER__) {
-      return String(window.__ELENWEAVE_SERVER__).replace(/\/+$/, '');
-    }
+    const raw = window.__ELENWEAVE_RUNTIME__;
+    if (!raw || typeof raw !== 'object') return { storageMode: 'client', serverBase: '' };
+    const storageMode = raw.storageMode === 'server' ? 'server' : 'client';
+    const serverBase = storageMode === 'server'
+      ? String(raw.serverBase || '').replace(/\/+$/, '')
+      : '';
+    return { storageMode, serverBase };
   } catch (err) {
-    return '';
+    return { storageMode: 'client', serverBase: '' };
   }
-  return '';
 })();
-let serverMode = SERVER_BASE ? true : null;
+const SERVER_BASE = RUNTIME_CONFIG.serverBase;
+const IS_SERVER_MODE = RUNTIME_CONFIG.storageMode === 'server';
 
 const workspace = new ElenweaveWorkspace();
 const view = new ElenweaveView({
@@ -138,6 +144,15 @@ function loadActiveBoardId() {
   }
 }
 
+function loadActiveProjectId() {
+  try {
+    const value = localStorage.getItem(ACTIVE_PROJECT_KEY);
+    return value || null;
+  } catch (err) {
+    return null;
+  }
+}
+
 function saveActiveBoardId(boardId) {
   try {
     if (!boardId) {
@@ -150,35 +165,24 @@ function saveActiveBoardId(boardId) {
   }
 }
 
-async function ensureServerMode() {
-  if (serverMode !== null) return serverMode;
-  if (location.protocol !== 'http:' && location.protocol !== 'https:') {
-    serverMode = false;
-    return serverMode;
-  }
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), SERVER_PROBE_TIMEOUT);
+function saveActiveProjectId(projectId) {
   try {
-    const response = await fetch(`${SERVER_BASE}/api/boards`, { signal: controller.signal });
-    window.clearTimeout(timer);
-    if (!response.ok) {
-      serverMode = false;
-      return serverMode;
+    if (!projectId) {
+      localStorage.removeItem(ACTIVE_PROJECT_KEY);
+      return;
     }
-    const payload = await response.json().catch(() => null);
-    serverMode = Boolean(payload && Array.isArray(payload.boards));
-    return serverMode;
+    localStorage.setItem(ACTIVE_PROJECT_KEY, projectId);
   } catch (err) {
-    serverMode = false;
-    return serverMode;
-  } finally {
-    window.clearTimeout(timer);
+    return;
   }
 }
 
+async function ensureServerMode() {
+  return IS_SERVER_MODE;
+}
+
 async function apiFetch(path, options = {}) {
-  const useServer = await ensureServerMode();
-  if (!useServer) throw new Error('Server API is unavailable.');
+  if (!IS_SERVER_MODE) throw new Error('Server API is disabled in client storage mode.');
   const headers = { ...(options.headers || {}) };
   let body = options.body;
   if (body && typeof body === 'object' && !(body instanceof FormData)) {
@@ -210,6 +214,8 @@ let dragSnapshot = null;
 let realtimeAgent = null;
 let realtimeEnabled = false;
 let realtimeState = { listening: false, speaking: false, capturing: false };
+let realtimeTurnNodes = new Map();
+let realtimeAudioStatusAt = 0;
 let aiRequestPending = false;
 let navFocusArmed = false;
 let navFocusTimer = null;
@@ -532,6 +538,8 @@ const DB_VERSION = 2;
 let recorder = null;
 let recordStream = null;
 let recordChunks = [];
+let projectIndex = [];
+let activeProjectId = null;
 let boardIndex = [];
 let activeBoardId = null;
 let isBoardSwitching = false;
@@ -573,8 +581,21 @@ initApp();
 // els.btnNext.addEventListener('click', () => cycleBoard(1));
 
 els.btnNew.addEventListener('click', () => {
-  const nextIndex = boardIndex.length + 1;
+  const nextIndex = getActiveProjectBoards().length + 1;
   createBoard(`Board ${nextIndex}`);
+});
+
+els.btnNewProject?.addEventListener('click', () => {
+  const nextIndex = projectIndex.length + 1;
+  createProject(`Project ${nextIndex}`);
+});
+
+els.projectSelect?.addEventListener('change', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLSelectElement)) return;
+  const projectId = target.value;
+  if (!projectId || projectId === activeProjectId) return;
+  activateProject(projectId);
 });
 
 els.btnLink.addEventListener('click', () => {
@@ -681,17 +702,19 @@ document.addEventListener('pointerdown', (event) => {
 workspace.on('graph:active', (graph) => {
   selectedNodeId = null;
   selectedEdgeId = null;
+  realtimeTurnNodes = new Map();
   resetAiContext();
   view.selectNode(null);
   updateEdgeFields(null);
   if (graph?.id) {
     activeBoardId = graph.id;
     const beforeCount = boardIndex.length;
-    ensureBoardIndexEntry(graph.id, graph.name || 'Untitled');
+    ensureBoardIndexEntry(graph.id, graph.name || 'Untitled', activeProjectId || 'local-default');
     if (boardIndex.length !== beforeCount) {
       saveWorkspaceIndex().catch((err) => console.warn('Board index save failed', err));
     }
   }
+  refreshProjectList();
   refreshBoardList();
   hydrateMediaNodes();
   syncPreviewToggles();
@@ -1032,13 +1055,16 @@ async function buildComponentUpdate(config, values, node) {
 
 async function attachAssetToNode(nodeId, file, node, config) {
   const asset = await saveAsset(file, config.assetType || file.type);
-  const url = await getAssetUrl(asset.id);
+  const url = asset.url || await getAssetUrl(asset.id);
   const existing = node || view.graph?.getNode(nodeId);
   const nextData = { ...(existing?.data || {}) };
   const nextProps = { ...(existing?.props || {}) };
   nextData.assetId = asset.id;
   nextData.assetName = asset.name;
   nextData.assetType = asset.type;
+  if (asset.category) {
+    nextData.assetCategory = asset.category;
+  }
   nextData.src = url;
   if (config?.assetType === 'audio' || config?.assetType === 'video' || config?.assetType === 'image') {
     nextProps.title = asset.name;
@@ -1706,8 +1732,38 @@ function initRealtime() {
       console.warn('Realtime error', err);
       setStatus('Realtime error.', 1800);
     },
-    onUserAudio: async (blob) => addRealtimeAudioNode(blob, 'User'),
-    onAiAudio: async (blob) => addRealtimeAudioNode(blob, 'AI'),
+    onUserTurnStart: ({ turnId }) => {
+      upsertRealtimeTranscriptNode(turnId, 'Listening...', false);
+      setStatus('Realtime listening...', 0);
+    },
+    onUserTranscriptDelta: ({ turnId, text, isFinal }) => {
+      upsertRealtimeTranscriptNode(turnId, text || 'Listening...', Boolean(isFinal));
+      setStatus(isFinal ? 'Voice input captured.' : 'Transcribing...', 1200);
+    },
+    onUserTurnEnd: ({ turnId }) => {
+      const entry = realtimeTurnNodes.get(turnId);
+      if (!entry?.userTranscriptNodeId || !view?.graph) return;
+      const node = view.graph.getNode(entry.userTranscriptNodeId);
+      if (!node) return;
+      const content = String(node.text || '').trim() || 'Voice request';
+      const data = {
+        ...(node.data || {}),
+        realtime: true,
+        realtimeTurnId: turnId,
+        realtimeRole: 'user_transcript',
+        realtimeStatus: 'final'
+      };
+      view.updateNode(node.id, { text: content, data });
+    },
+    onAiAudioChunk: () => {
+      const now = Date.now();
+      if (now - realtimeAudioStatusAt < 800) return;
+      realtimeAudioStatusAt = now;
+      setStatus('Streaming AI audio...', 1000);
+    },
+    onAiTurnComplete: async (payload) => {
+      await finalizeRealtimeTurn(payload);
+    },
     onIntent: async (intent) => handleRealtimeIntent(intent),
     onState: (state) => {
       realtimeState = { ...realtimeState, ...state };
@@ -1721,6 +1777,7 @@ function initRealtime() {
     if (realtimeEnabled) {
       await realtimeAgent.stop();
       realtimeEnabled = false;
+      realtimeAudioStatusAt = 0;
       updateRealtimeButton();
       return;
     }
@@ -1732,6 +1789,7 @@ function initRealtime() {
     try {
       await realtimeAgent.start({ apiKey, model: REALTIME_MODEL });
       realtimeEnabled = true;
+      realtimeAudioStatusAt = 0;
       updateRealtimeButton();
     } catch (err) {
       console.warn('Realtime start failed', err);
@@ -2032,15 +2090,17 @@ function focusSelectionIfNavigating(node) {
   }
 }
 
-function ensureBoardIndexEntry(id, name) {
+function ensureBoardIndexEntry(id, name, projectId = activeProjectId || 'local-default') {
   if (!id) return null;
   const existing = boardIndex.find((entry) => entry.id === id);
   if (existing) {
     if (name && existing.name !== name) existing.name = name;
+    if (projectId && existing.projectId !== projectId) existing.projectId = projectId;
     return existing;
   }
   const entry = {
     id,
+    projectId,
     name: name || 'Untitled',
     updatedAt: Date.now()
   };
@@ -2050,10 +2110,66 @@ function ensureBoardIndexEntry(id, name) {
 
 function updateBoardIndexEntry(id, patch = {}) {
   if (!id) return null;
-  const entry = ensureBoardIndexEntry(id, patch.name);
+  const entry = ensureBoardIndexEntry(id, patch.name, patch.projectId);
   if (!entry) return null;
   Object.assign(entry, patch);
   return entry;
+}
+
+function ensureProjectIndexEntry(id, name) {
+  if (!id) return null;
+  const existing = projectIndex.find((entry) => entry.id === id);
+  if (existing) {
+    if (name && existing.name !== name) existing.name = name;
+    return existing;
+  }
+  const entry = {
+    id,
+    name: name || 'Untitled Project',
+    updatedAt: Date.now()
+  };
+  projectIndex.push(entry);
+  return entry;
+}
+
+function updateProjectIndexEntry(id, patch = {}) {
+  if (!id) return null;
+  const entry = ensureProjectIndexEntry(id, patch.name);
+  if (!entry) return null;
+  Object.assign(entry, patch);
+  return entry;
+}
+
+function getActiveProjectBoards() {
+  return boardIndex.filter((entry) => (entry.projectId || null) === (activeProjectId || null));
+}
+
+function refreshProjectList() {
+  if (!els.projectSelect) return;
+  const current = activeProjectId;
+  els.projectSelect.innerHTML = '';
+  projectIndex.forEach((project) => {
+    const option = document.createElement('option');
+    option.value = project.id;
+    option.textContent = project.name;
+    els.projectSelect.appendChild(option);
+  });
+  if (current && projectIndex.some((entry) => entry.id === current)) {
+    els.projectSelect.value = current;
+  } else if (projectIndex.length) {
+    els.projectSelect.value = projectIndex[0].id;
+  }
+}
+
+function generateProjectId() {
+  let id = '';
+  do {
+    const seed = typeof crypto?.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2, 10);
+    id = `p_${seed.replace(/[^a-z0-9]/gi, '').slice(0, 10)}`;
+  } while (projectIndex.some((entry) => entry.id === id));
+  return id;
 }
 
 function generateBoardId() {
@@ -2086,10 +2202,144 @@ async function saveActiveGraph() {
   const cleaned = scrubExportPayload(payload);
   await saveGraphPayload(payload.id, cleaned);
   updateBoardIndexEntry(payload.id, {
+    projectId: activeProjectId || 'local-default',
     name: cleaned.name || 'Untitled',
     updatedAt: Date.now()
   });
   await saveWorkspaceIndex();
+}
+
+async function createLocalBoard(name, options = {}) {
+  const projectId = activeProjectId || 'local-default';
+  ensureProjectIndexEntry(projectId, projectId === 'local-default' ? 'Local Project' : undefined);
+  const id = generateBoardId();
+  const entry = {
+    id,
+    projectId,
+    name: name || 'Untitled',
+    updatedAt: Date.now()
+  };
+  boardIndex.push(entry);
+  await saveGraphPayload(id, createEmptyGraphPayload(id, entry.name));
+  if (options.activate !== false) {
+    await activateBoard(id, { skipSave: Boolean(options.skipSaveOnActivate) });
+  }
+  if (options.queueEdit) {
+    queueBoardEdit(id);
+  }
+  return entry;
+}
+
+async function createProject(name) {
+  if (await ensureServerMode()) {
+    try {
+      const response = await apiFetch('/api/projects', {
+        method: 'POST',
+        body: { name: name || 'Untitled Project' }
+      });
+      const project = response?.project;
+      if (!project?.id) throw new Error('Project create failed');
+      ensureProjectIndexEntry(project.id, project.name || name || 'Untitled Project');
+      await activateProject(project.id, { skipSave: true, createBoardIfEmpty: true });
+      setStatus('Project created.');
+    } catch (err) {
+      console.warn('Project create failed', err);
+      setStatus('Project create failed.');
+    }
+    return;
+  }
+  const id = generateProjectId();
+  const entry = {
+    id,
+    name: name || 'Untitled Project',
+    updatedAt: Date.now()
+  };
+  projectIndex.push(entry);
+  await activateProject(id, { force: true, createBoardIfEmpty: true });
+  setStatus('Project created.');
+}
+
+async function activateProject(projectId, options = {}) {
+  if (!projectId) return;
+  if (activeProjectId === projectId && !options.force) return;
+  if (!projectIndex.some((entry) => entry.id === projectId)) return;
+
+  if (await ensureServerMode()) {
+    try {
+      if (!options.skipSave) {
+        await saveActiveGraph();
+      }
+      activeProjectId = projectId;
+      const boardsPayload = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/boards`);
+      boardIndex = Array.isArray(boardsPayload?.boards)
+        ? boardsPayload.boards.map((entry) => ({
+          id: entry.id,
+          projectId,
+          name: entry.name || 'Untitled',
+          updatedAt: entry.updatedAt || Date.now()
+        }))
+        : [];
+
+      let nextBoardId = loadActiveBoardId();
+      if (!boardIndex.some((entry) => entry.id === nextBoardId)) {
+        nextBoardId = boardIndex[0]?.id || null;
+      }
+
+      if (!nextBoardId && options.createBoardIfEmpty !== false) {
+        const created = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/boards`, {
+          method: 'POST',
+          body: { name: 'Board 01' }
+        });
+        const board = created?.board;
+        if (board?.id) {
+          boardIndex.push({
+            id: board.id,
+            projectId,
+            name: board.name || 'Board 01',
+            updatedAt: board.updatedAt || Date.now()
+          });
+          nextBoardId = board.id;
+        }
+      }
+
+      activeBoardId = nextBoardId;
+      await saveWorkspaceIndex();
+      refreshProjectList();
+      refreshBoardList();
+      if (nextBoardId) {
+        await activateBoard(nextBoardId, { skipSave: true });
+      }
+      return;
+    } catch (err) {
+      console.warn('Project activation failed', err);
+      setStatus('Project load failed.', 1800);
+      return;
+    }
+  }
+
+  if (!options.skipSave) {
+    await saveActiveGraph();
+  }
+  activeProjectId = projectId;
+  const boards = getActiveProjectBoards();
+  let nextBoardId = loadActiveBoardId();
+  if (!boards.some((entry) => entry.id === nextBoardId)) {
+    nextBoardId = boards[0]?.id || null;
+  }
+  if (!nextBoardId && options.createBoardIfEmpty !== false) {
+    const created = await createLocalBoard('Board 01', {
+      activate: false,
+      queueEdit: false
+    });
+    nextBoardId = created.id;
+  }
+  activeBoardId = nextBoardId;
+  await saveWorkspaceIndex();
+  refreshProjectList();
+  refreshBoardList();
+  if (nextBoardId) {
+    await activateBoard(nextBoardId, { skipSave: true });
+  }
 }
 
 async function activateBoard(boardId, options = {}) {
@@ -2101,7 +2351,7 @@ async function activateBoard(boardId, options = {}) {
       await saveActiveGraph();
     }
     let payload = await loadGraphPayload(boardId);
-    const entry = ensureBoardIndexEntry(boardId, payload?.name || 'Untitled');
+    const entry = ensureBoardIndexEntry(boardId, payload?.name || 'Untitled', activeProjectId || 'local-default');
     if (!payload) {
       payload = createEmptyGraphPayload(boardId, entry?.name || 'Untitled');
       await saveGraphPayload(boardId, payload);
@@ -2120,7 +2370,11 @@ async function activateBoard(boardId, options = {}) {
 async function createBoard(name) {
   if (await ensureServerMode()) {
     try {
-      const response = await apiFetch('/api/boards', {
+      if (!activeProjectId) {
+        setStatus('Select a project first.', 1800);
+        return;
+      }
+      const response = await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards`, {
         method: 'POST',
         body: { name: name || 'Untitled' }
       });
@@ -2128,6 +2382,7 @@ async function createBoard(name) {
       if (!board?.id) throw new Error('Board create failed');
       const entry = {
         id: board.id,
+        projectId: activeProjectId,
         name: board.name || name || 'Untitled',
         updatedAt: board.updatedAt || Date.now()
       };
@@ -2141,26 +2396,25 @@ async function createBoard(name) {
     }
     return;
   }
-  const id = generateBoardId();
-  const entry = {
-    id,
-    name: name || 'Untitled',
-    updatedAt: Date.now()
-  };
-  boardIndex.push(entry);
-  await saveGraphPayload(id, createEmptyGraphPayload(id, entry.name));
-  await activateBoard(id);
+  await createLocalBoard(name || 'Untitled', {
+    activate: true,
+    queueEdit: true
+  });
   setStatus('Board created.');
-  queueBoardEdit(id);
 }
 
 async function importBoardPayload(payload) {
   if (!payload || !Array.isArray(payload.nodes) || !Array.isArray(payload.edges)) return null;
+  if (!activeProjectId) {
+    activeProjectId = 'local-default';
+    ensureProjectIndexEntry(activeProjectId, 'Local Project');
+  }
   const desiredId = payload.id || generateBoardId();
   const id = boardIndex.some((entry) => entry.id === desiredId) ? generateBoardId() : desiredId;
   const name = payload.name || 'Imported board';
   const entry = {
     id,
+    projectId: activeProjectId || 'local-default',
     name,
     updatedAt: Date.now()
   };
@@ -2178,7 +2432,7 @@ async function importBoardPayload(payload) {
 function refreshBoardList() {
   if (!els.boardList) return;
   els.boardList.innerHTML = '';
-  boardIndex.forEach((board) => {
+  getActiveProjectBoards().forEach((board) => {
     const btn = document.createElement('button');
     btn.className = `board-item${board.id === activeBoardId ? ' active' : ''}`;
     btn.type = 'button';
@@ -2207,7 +2461,7 @@ function queueBoardEdit(graphId) {
 function flushQueuedBoardEdit() {
   if (!activeBoardEdit?.pendingId) return;
   const btn = els.boardList.querySelector(`[data-board-id="${activeBoardEdit.pendingId}"]`);
-  const board = boardIndex.find((entry) => entry.id === activeBoardEdit.pendingId);
+  const board = getActiveProjectBoards().find((entry) => entry.id === activeBoardEdit.pendingId);
   if (btn && board) startBoardEdit(btn, board);
 }
 
@@ -2254,7 +2508,8 @@ function commitBoardEdit(value) {
     ensureServerMode()
       .then((useServer) => {
         if (useServer) {
-          return apiFetch(`/api/boards/${encodeURIComponent(activeBoardEdit.id)}`, {
+          if (!activeProjectId) return null;
+          return apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards/${encodeURIComponent(activeBoardEdit.id)}`, {
             method: 'PATCH',
             body: { name }
           });
@@ -2276,10 +2531,11 @@ function cancelBoardEdit() {
 }
 
 function cycleBoard(direction) {
-  if (!boardIndex.length) return;
-  const idx = boardIndex.findIndex((b) => b.id === activeBoardId);
-  const next = (idx + direction + boardIndex.length) % boardIndex.length;
-  activateBoard(boardIndex[next].id);
+  const boards = getActiveProjectBoards();
+  if (!boards.length) return;
+  const idx = boards.findIndex((b) => b.id === activeBoardId);
+  const next = (idx + direction + boards.length) % boards.length;
+  activateBoard(boards[next].id);
 }
 
 function exportBoard() {
@@ -2713,10 +2969,13 @@ async function handleRealtimeIntent(intent) {
   const primaryResultId = getPrimaryAiResultId(outcome);
   addAiNotification(primaryResultId, outcome);
   focusOnAiResult(primaryResultId, outcome);
+  const nodesAdded = outcome.addedNodes.length;
+  const edgesAdded = outcome.addedEdges.length;
   return {
     result: 'ok',
-    nodesAdded: outcome.addedNodes.length,
-    edgesAdded: outcome.addedEdges.length
+    nodesAdded,
+    edgesAdded,
+    summary: `Applied realtime board plan (${nodesAdded} nodes, ${edgesAdded} edges).`
   };
 }
 
@@ -2988,17 +3247,107 @@ function buildRealtimeAudioName(role) {
   return `${safeRole}-audio-${stamp}.wav`;
 }
 
-async function addRealtimeAudioNode(blob, role) {
+function ensureRealtimeTurnEntry(turnId) {
+  const key = String(turnId || '').trim();
+  if (!key) return null;
+  if (!realtimeTurnNodes.has(key)) {
+    realtimeTurnNodes.set(key, {
+      userTranscriptNodeId: null,
+      aiAudioNodeId: null,
+      aiTextNodeId: null
+    });
+  }
+  return realtimeTurnNodes.get(key);
+}
+
+function upsertRealtimeTranscriptNode(turnId, text, isFinal) {
+  if (!view?.graph) return null;
+  const entry = ensureRealtimeTurnEntry(turnId);
+  if (!entry) return null;
+
+  const nextText = String(text || '').trim() || (isFinal ? 'Voice request' : 'Listening...');
+  if (!entry.userTranscriptNodeId) {
+    const id = addNodeAtCenter({
+      type: 'html-text',
+      text: nextText,
+      data: {
+        realtime: true,
+        realtimeTurnId: turnId,
+        realtimeRole: 'user_transcript',
+        realtimeStatus: isFinal ? 'final' : 'live'
+      },
+      w: 340,
+      h: 170
+    });
+    entry.userTranscriptNodeId = id;
+    return id;
+  }
+
+  const node = view.graph.getNode(entry.userTranscriptNodeId);
+  if (!node) return entry.userTranscriptNodeId;
+  const data = {
+    ...(node.data || {}),
+    realtime: true,
+    realtimeTurnId: turnId,
+    realtimeRole: 'user_transcript',
+    realtimeStatus: isFinal ? 'final' : 'live'
+  };
+  view.updateNode(node.id, { text: nextText, data });
+  return node.id;
+}
+
+function connectNodesIfMissing(from, to) {
+  if (!from || !to || from === to || !view?.graph) return null;
+  const exists = view.graph.edges.some((edge) => edge.from === from && edge.to === to);
+  if (exists) return null;
+  return view.addEdge(from, to, {});
+}
+
+function buildRealtimeResponseMarkdown(payload) {
+  const modelText = String(payload?.text || '').trim();
+  if (modelText) return modelText;
+  const toolSummary = String(payload?.toolSummary || '').trim();
+  if (toolSummary) return `### Realtime Summary\n\n${toolSummary}`;
+  return 'Audio response streamed.';
+}
+
+function addRealtimeTextNode(turnId, markdown) {
+  const config = COMPONENT_LOOKUP.get('MarkdownBlock');
+  if (!config) return null;
+  return addNodeAtCenter({
+    type: 'html',
+    component: config.component,
+    props: { title: 'AI Response' },
+    data: {
+      markdown,
+      realtime: true,
+      realtimeTurnId: turnId,
+      realtimeRole: 'ai_text',
+      realtimeStatus: 'final'
+    },
+    w: config.size?.w || 360,
+    h: config.size?.h || 240
+  });
+}
+
+async function addRealtimeAudioNode(blob, role, options = {}) {
   if (!blob) return null;
   const config = COMPONENT_LOOKUP.get('AudioPlayer');
   if (!config) return null;
   const filename = buildRealtimeAudioName(role);
   const file = new File([blob], filename, { type: 'audio/wav' });
+  const title = options?.title || (role === 'AI' ? 'AI Audio' : 'User Audio');
+  const turnId = options?.turnId || null;
   const id = addNodeAtCenter({
     type: 'html',
     component: config.component,
-    props: { title: role === 'AI' ? 'AI Audio' : 'User Audio' },
-    data: {},
+    props: { title },
+    data: {
+      realtime: Boolean(turnId),
+      realtimeTurnId: turnId,
+      realtimeRole: role === 'AI' ? 'ai_audio' : 'user_audio',
+      realtimeStatus: 'final'
+    },
     w: config.size?.w || 320,
     h: config.size?.h || 160
   });
@@ -3006,6 +3355,96 @@ async function addRealtimeAudioNode(blob, role) {
     await attachAssetToNode(id, file, null, config);
   }
   return id;
+}
+
+async function finalizeRealtimeTurn(payload) {
+  const turnId = String(payload?.turnId || '').trim();
+  if (!turnId) return null;
+  const entry = ensureRealtimeTurnEntry(turnId);
+  if (!entry) return null;
+
+  if (!entry.userTranscriptNodeId) {
+    upsertRealtimeTranscriptNode(turnId, payload?.userTranscript || 'Voice request', true);
+  }
+  if (entry.userTranscriptNodeId && view?.graph) {
+    const userNode = view.graph.getNode(entry.userTranscriptNodeId);
+    if (userNode) {
+      const text = String(userNode.text || payload?.userTranscript || '').trim() || 'Voice request';
+      view.updateNode(userNode.id, {
+        text,
+        data: {
+          ...(userNode.data || {}),
+          realtime: true,
+          realtimeTurnId: turnId,
+          realtimeRole: 'user_transcript',
+          realtimeStatus: 'final'
+        }
+      });
+    }
+  }
+
+  const createdIds = [];
+  if (!entry.aiAudioNodeId && payload?.audioBlob) {
+    const audioId = await addRealtimeAudioNode(payload.audioBlob, 'AI', { turnId, title: 'AI Audio' });
+    if (audioId) {
+      entry.aiAudioNodeId = audioId;
+      createdIds.push(audioId);
+    }
+  }
+
+  const responseMarkdown = buildRealtimeResponseMarkdown(payload);
+  if (!entry.aiTextNodeId) {
+    const textId = addRealtimeTextNode(turnId, responseMarkdown);
+    if (textId) {
+      entry.aiTextNodeId = textId;
+      createdIds.push(textId);
+    }
+  } else if (view?.graph) {
+    const existingTextNode = view.graph.getNode(entry.aiTextNodeId);
+    if (existingTextNode) {
+      view.updateNode(existingTextNode.id, {
+        data: {
+          ...(existingTextNode.data || {}),
+          markdown: responseMarkdown,
+          realtime: true,
+          realtimeTurnId: turnId,
+          realtimeRole: 'ai_text',
+          realtimeStatus: 'final'
+        }
+      });
+    }
+  }
+
+  if (entry.userTranscriptNodeId && entry.aiAudioNodeId) {
+    connectNodesIfMissing(entry.userTranscriptNodeId, entry.aiAudioNodeId);
+  }
+  if (entry.aiAudioNodeId && entry.aiTextNodeId) {
+    connectNodesIfMissing(entry.aiAudioNodeId, entry.aiTextNodeId);
+  } else if (entry.userTranscriptNodeId && entry.aiTextNodeId) {
+    connectNodesIfMissing(entry.userTranscriptNodeId, entry.aiTextNodeId);
+  }
+
+  if (createdIds.length) {
+    layoutNewNodesHierarchy(createdIds, { rootId: entry.userTranscriptNodeId || selectedNodeId });
+  }
+  if (entry.aiTextNodeId) {
+    focusOnAiResult(entry.aiTextNodeId, {
+      addedNodes: [entry.aiTextNodeId],
+      updatedNodes: [],
+      addedEdges: [],
+      updatedEdges: []
+    });
+  } else if (entry.aiAudioNodeId) {
+    focusOnAiResult(entry.aiAudioNodeId, {
+      addedNodes: [entry.aiAudioNodeId],
+      updatedNodes: [],
+      addedEdges: [],
+      updatedEdges: []
+    });
+  }
+
+  setStatus('Realtime turn saved.', 1600);
+  return entry;
 }
 
 function getPrimaryAiResultId(outcome) {
@@ -3881,6 +4320,8 @@ async function handleImportFile(e) {
 
 
 async function seedBoards() {
+  projectIndex = [{ id: 'local-default', name: 'Local Project', updatedAt: Date.now() }];
+  activeProjectId = projectIndex[0].id;
   const firstId = generateBoardId();
   const secondId = generateBoardId();
   const firstPayload = {
@@ -3926,8 +4367,8 @@ async function seedBoards() {
     notifications: []
   };
   boardIndex = [
-    { id: firstId, name: 'Board 01', updatedAt: Date.now() },
-    { id: secondId, name: 'Board 02', updatedAt: Date.now() }
+    { id: firstId, projectId: activeProjectId, name: 'Board 01', updatedAt: Date.now() },
+    { id: secondId, projectId: activeProjectId, name: 'Board 02', updatedAt: Date.now() }
   ];
   activeBoardId = firstId;
   await saveGraphPayload(firstId, scrubExportPayload(firstPayload));
@@ -4045,7 +4486,9 @@ function openDb() {
 function buildWorkspaceIndexPayload() {
   return {
     id: WORKSPACE_INDEX_KEY,
+    activeProjectId,
     activeGraphId: activeBoardId,
+    projects: projectIndex.map((project) => ({ ...project })),
     boards: boardIndex.map((board) => ({ ...board })),
     updatedAt: Date.now()
   };
@@ -4053,6 +4496,7 @@ function buildWorkspaceIndexPayload() {
 
 async function saveWorkspaceIndex() {
   if (await ensureServerMode()) {
+    saveActiveProjectId(activeProjectId);
     saveActiveBoardId(activeBoardId);
     return;
   }
@@ -4067,20 +4511,7 @@ async function saveWorkspaceIndex() {
 }
 
 async function loadWorkspaceIndex() {
-  if (await ensureServerMode()) {
-    try {
-      const payload = await apiFetch('/api/boards');
-      return {
-        id: WORKSPACE_INDEX_KEY,
-        activeGraphId: loadActiveBoardId(),
-        boards: Array.isArray(payload?.boards) ? payload.boards : [],
-        updatedAt: Date.now()
-      };
-    } catch (err) {
-      console.warn('Server index load failed', err);
-      serverMode = false;
-    }
-  }
+  if (await ensureServerMode()) return null;
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(WORKSPACE_STORE, 'readonly');
@@ -4091,6 +4522,7 @@ async function loadWorkspaceIndex() {
 }
 
 async function loadLegacyWorkspacePayload() {
+  if (await ensureServerMode()) return null;
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(WORKSPACE_STORE, 'readonly');
@@ -4101,6 +4533,7 @@ async function loadLegacyWorkspacePayload() {
 }
 
 async function clearLegacyWorkspacePayload() {
+  if (await ensureServerMode()) return;
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(WORKSPACE_STORE, 'readwrite');
@@ -4110,14 +4543,16 @@ async function clearLegacyWorkspacePayload() {
   });
 }
 
-function graphPayloadKey(graphId) {
-  return `${WORKSPACE_GRAPH_PREFIX}${graphId}`;
+function graphPayloadKey(projectId, graphId) {
+  const scope = projectId || 'local-default';
+  return `${WORKSPACE_GRAPH_PREFIX}${scope}_${graphId}`;
 }
 
 async function saveGraphPayload(graphId, payload) {
   if (!graphId || !payload) return;
   if (await ensureServerMode()) {
-    await apiFetch(`/api/boards/${encodeURIComponent(graphId)}`, {
+    if (!activeProjectId) throw new Error('No active project.');
+    await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards/${encodeURIComponent(graphId)}`, {
       method: 'PUT',
       body: { board: payload }
     });
@@ -4127,8 +4562,9 @@ async function saveGraphPayload(graphId, payload) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(WORKSPACE_STORE, 'readwrite');
     tx.objectStore(WORKSPACE_STORE).put({
-      id: graphPayloadKey(graphId),
+      id: graphPayloadKey(activeProjectId || 'local-default', graphId),
       graphId,
+      projectId: activeProjectId || 'local-default',
       payload,
       updatedAt: Date.now()
     });
@@ -4141,7 +4577,8 @@ async function loadGraphPayload(graphId) {
   if (!graphId) return null;
   if (await ensureServerMode()) {
     try {
-      const payload = await apiFetch(`/api/boards/${encodeURIComponent(graphId)}`);
+      if (!activeProjectId) return null;
+      const payload = await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards/${encodeURIComponent(graphId)}`);
       return payload?.board || null;
     } catch (err) {
       return null;
@@ -4150,7 +4587,7 @@ async function loadGraphPayload(graphId) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(WORKSPACE_STORE, 'readonly');
-    const request = tx.objectStore(WORKSPACE_STORE).get(graphPayloadKey(graphId));
+    const request = tx.objectStore(WORKSPACE_STORE).get(graphPayloadKey(activeProjectId || 'local-default', graphId));
     request.onsuccess = () => resolve(request.result?.payload || null);
     request.onerror = () => reject(request.error);
   });
@@ -4160,7 +4597,8 @@ async function deleteGraphPayload(graphId) {
   if (!graphId) return;
   if (await ensureServerMode()) {
     try {
-      await apiFetch(`/api/boards/${encodeURIComponent(graphId)}`, { method: 'DELETE' });
+      if (!activeProjectId) return;
+      await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards/${encodeURIComponent(graphId)}`, { method: 'DELETE' });
     } catch (err) {
       return;
     }
@@ -4169,13 +4607,57 @@ async function deleteGraphPayload(graphId) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(WORKSPACE_STORE, 'readwrite');
-    tx.objectStore(WORKSPACE_STORE).delete(graphPayloadKey(graphId));
+    tx.objectStore(WORKSPACE_STORE).delete(graphPayloadKey(activeProjectId || 'local-default', graphId));
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 }
 
+function buildServerAssetUrl(projectId, assetId, providedUrl = '') {
+  if (!projectId || !assetId) return '';
+  if (providedUrl) {
+    if (/^https?:\/\//i.test(providedUrl)) return providedUrl;
+    return `${SERVER_BASE}${providedUrl}`;
+  }
+  return `${SERVER_BASE}/api/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
 async function saveAsset(file, category) {
+  if (await ensureServerMode()) {
+    if (!activeProjectId) throw new Error('No active project.');
+    const response = await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/assets`, {
+      method: 'POST',
+      body: {
+        filename: file.name || `${category}-${Date.now()}`,
+        mimeType: file.type || 'application/octet-stream',
+        category: category || null,
+        base64: await fileToBase64(file)
+      }
+    });
+    const asset = response?.asset;
+    if (!asset?.id) throw new Error('Asset save failed.');
+    return {
+      id: asset.id,
+      name: asset.name || file.name || `${category}-${Date.now()}`,
+      type: asset.type || file.type || 'application/octet-stream',
+      category: asset.category || category || null,
+      createdAt: Number(asset.createdAt || Date.now()),
+      url: buildServerAssetUrl(activeProjectId, asset.id, asset.url || '')
+    };
+  }
   const asset = {
     id: crypto.randomUUID(),
     name: file.name || `${category}-${Date.now()}`,
@@ -4195,6 +4677,23 @@ async function saveAsset(file, category) {
 }
 
 async function getAsset(assetId) {
+  if (await ensureServerMode()) {
+    if (!activeProjectId || !assetId) return null;
+    try {
+      const response = await fetch(buildServerAssetUrl(activeProjectId, assetId), { method: 'GET' });
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      return {
+        id: assetId,
+        name: response.headers.get('X-Elenweave-Asset-Name') || null,
+        type: response.headers.get('Content-Type') || blob.type || '',
+        category: response.headers.get('X-Elenweave-Asset-Category') || null,
+        blob
+      };
+    } catch (err) {
+      return null;
+    }
+  }
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(DB_STORE, 'readonly');
@@ -4206,6 +4705,9 @@ async function getAsset(assetId) {
 
 async function getAssetUrl(assetId) {
   if (!assetId) return '';
+  if (await ensureServerMode()) {
+    return buildServerAssetUrl(activeProjectId, assetId);
+  }
   if (ASSET_URLS.has(assetId)) return ASSET_URLS.get(assetId);
   const asset = await getAsset(assetId);
   if (!asset?.blob) return '';
@@ -4331,8 +4833,12 @@ function restoreUiState() {
 }
 
 async function initApp() {
+  const useServer = await ensureServerMode();
   const restored = await restoreWorkspace();
-  if (!restored) await seedBoards();
+  if (!restored && !useServer) {
+    await seedBoards();
+  }
+  refreshProjectList();
   refreshBoardList();
   setTheme(loadTheme());
   setEdgeStyle(loadEdgeStyle());
@@ -4346,20 +4852,94 @@ async function initApp() {
   syncApiKeyInput();
   initRealtime();
   restoreUiState();
+  if (!restored && useServer) {
+    setStatus('Server storage mode requires a live API. Could not load /api/projects.', 0);
+    return;
+  }
   await hydrateMediaNodes();
   collapseNotificationPanel();
   window.requestAnimationFrame(() => fitContentToView());
   setStatus('Demo workspace ready.');
 }
 
+async function restoreServerWorkspace() {
+  try {
+    const projectsPayload = await apiFetch('/api/projects');
+    let projects = Array.isArray(projectsPayload?.projects) ? projectsPayload.projects : [];
+    if (!projects.length) {
+      const created = await apiFetch('/api/projects', {
+        method: 'POST',
+        body: { name: 'Default Project' }
+      });
+      if (created?.project?.id) {
+        projects = [created.project];
+      }
+    }
+    if (!projects.length) return false;
+
+    projectIndex = projects.map((entry) => ({
+      id: entry.id,
+      name: entry.name || 'Untitled Project',
+      updatedAt: entry.updatedAt || Date.now()
+    }));
+
+    let projectId = loadActiveProjectId();
+    if (!projectIndex.some((entry) => entry.id === projectId)) {
+      projectId = projectIndex[0]?.id || null;
+    }
+    if (!projectId) return false;
+    activeProjectId = projectId;
+    saveActiveProjectId(activeProjectId);
+
+    const boardsPayload = await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards`);
+    boardIndex = Array.isArray(boardsPayload?.boards)
+      ? boardsPayload.boards.map((entry) => ({
+        id: entry.id,
+        projectId: activeProjectId,
+        name: entry.name || 'Untitled',
+        updatedAt: entry.updatedAt || Date.now()
+      }))
+      : [];
+
+    let boardId = loadActiveBoardId();
+    if (!boardIndex.some((entry) => entry.id === boardId)) {
+      boardId = boardIndex[0]?.id || null;
+    }
+    if (!boardId) {
+      const createdBoard = await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards`, {
+        method: 'POST',
+        body: { name: 'Board 01' }
+      });
+      if (!createdBoard?.board?.id) return false;
+      boardIndex.push({
+        id: createdBoard.board.id,
+        projectId: activeProjectId,
+        name: createdBoard.board.name || 'Board 01',
+        updatedAt: createdBoard.board.updatedAt || Date.now()
+      });
+      boardId = createdBoard.board.id;
+    }
+    activeBoardId = boardId;
+    await activateBoard(activeBoardId, { skipSave: true });
+    return true;
+  } catch (err) {
+    console.warn('Server workspace restore failed', err);
+    return false;
+  }
+}
+
 async function restoreWorkspace() {
   try {
+    if (await ensureServerMode()) {
+      return restoreServerWorkspace();
+    }
     const index = await loadWorkspaceIndex();
     if (!index || !Array.isArray(index.boards) || !index.boards.length) {
       const legacy = await loadLegacyWorkspacePayload();
       if (!legacy || !Array.isArray(legacy.graphs) || !legacy.graphs.length) return false;
       boardIndex = legacy.graphs.map((graph) => ({
         id: graph.id || generateBoardId(),
+        projectId: 'local-default',
         name: graph.name || 'Untitled',
         updatedAt: Date.now()
       }));
@@ -4372,19 +4952,44 @@ async function restoreWorkspace() {
         await saveGraphPayload(entry.id, scrubExportPayload(payload));
       }
       activeBoardId = legacy.activeGraphId ? legacyIdMap.get(legacy.activeGraphId) : boardIndex[0]?.id || null;
+      projectIndex = [{ id: 'local-default', name: 'Local Project', updatedAt: Date.now() }];
+      activeProjectId = projectIndex[0].id;
       await saveWorkspaceIndex();
       await clearLegacyWorkspacePayload();
       if (!activeBoardId) return false;
       await activateBoard(activeBoardId, { skipSave: true });
       return true;
     }
+    projectIndex = Array.isArray(index.projects) && index.projects.length
+      ? index.projects.map((entry) => ({
+        id: entry.id,
+        name: entry.name || 'Local Project',
+        updatedAt: entry.updatedAt || Date.now()
+      }))
+      : [{ id: 'local-default', name: 'Local Project', updatedAt: Date.now() }];
+    activeProjectId = index.activeProjectId || projectIndex[0]?.id || null;
+    if (!projectIndex.some((entry) => entry.id === activeProjectId)) {
+      activeProjectId = projectIndex[0]?.id || null;
+    }
     boardIndex = index.boards.map((entry) => ({
       id: entry.id,
+      projectId: entry.projectId || activeProjectId || 'local-default',
       name: entry.name || 'Untitled',
       updatedAt: entry.updatedAt || Date.now()
     }));
-    activeBoardId = index.activeGraphId || boardIndex[0]?.id || null;
-    if (!activeBoardId) return false;
+    const activeBoards = boardIndex.filter((entry) => (entry.projectId || null) === (activeProjectId || null));
+    activeBoardId = activeBoards.some((entry) => entry.id === index.activeGraphId)
+      ? index.activeGraphId
+      : activeBoards[0]?.id || null;
+    if (!activeBoardId) {
+      if (!activeProjectId) return false;
+      const created = await createLocalBoard('Board 01', {
+        activate: false,
+        queueEdit: false
+      });
+      activeBoardId = created.id;
+      await saveWorkspaceIndex();
+    }
     await activateBoard(activeBoardId, { skipSave: true });
     return true;
   } catch (err) {

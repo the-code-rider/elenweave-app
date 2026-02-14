@@ -1,6 +1,6 @@
-# AI Features (pages/app)
+# AI Features (app)
 
-This document summarizes the AI-specific features implemented in the app layer (`pages/app`).
+This document summarizes the AI-specific features implemented in the app layer (`app`).
 
 ## Models & Providers
 - Default models:
@@ -68,4 +68,4 @@ This document summarizes the AI-specific features implemented in the app layer (
 
 ---
 
-If you need a full prompt spec or schema changes, refer to `buildAiPrompt()` and `applyAiPlan()` in `pages/app/app.js`.
+If you need a full prompt spec or schema changes, refer to `buildAiPrompt()` and `applyAiPlan()` in `app/app.js`.

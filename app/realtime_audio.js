@@ -157,12 +157,142 @@ function extractAudioChunks(message) {
   return chunks;
 }
 
+function int16ToFloat32(samples) {
+  const out = new Float32Array(samples.length);
+  for (let i = 0; i < samples.length; i += 1) {
+    out[i] = samples[i] / 32768;
+  }
+  return out;
+}
+
+function mergeLiveText(current, incoming) {
+  const base = String(current || '').trim();
+  const next = String(incoming || '').trim();
+  if (!next) return base;
+  if (!base) return next;
+  if (next === base) return base;
+  if (next.startsWith(base)) return next;
+  if (base.startsWith(next)) return base;
+  if (base.includes(next)) return base;
+  return `${base}\n${next}`;
+}
+
+function buildTurnId() {
+  const stamp = Date.now().toString(36);
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `rt_${stamp}_${rand}`;
+}
+
+function extractTextParts(message) {
+  const chunks = [];
+  const pushText = (value) => {
+    const text = String(value || '').trim();
+    if (!text) return;
+    if (chunks[chunks.length - 1] === text) return;
+    chunks.push(text);
+  };
+
+  pushText(message?.text);
+  const parts = message?.serverContent?.modelTurn?.parts;
+  if (Array.isArray(parts)) {
+    parts.forEach((part) => {
+      pushText(part?.text);
+    });
+  }
+
+  const outputTranscription = message?.serverContent?.outputTranscription
+    || message?.outputTranscription
+    || message?.modelOutputTranscription
+    || null;
+  if (typeof outputTranscription === 'string') {
+    pushText(outputTranscription);
+  } else if (outputTranscription && typeof outputTranscription === 'object') {
+    pushText(outputTranscription.text || outputTranscription.transcript || outputTranscription.content);
+  }
+
+  return chunks;
+}
+
+function extractInputTranscriptions(message) {
+  const out = [];
+  const appendEntry = (entry, fallbackFinal = false) => {
+    if (entry == null) return;
+    if (typeof entry === 'string') {
+      const text = entry.trim();
+      if (!text) return;
+      out.push({ text, isFinal: fallbackFinal });
+      return;
+    }
+    if (Array.isArray(entry)) {
+      entry.forEach((item) => appendEntry(item, fallbackFinal));
+      return;
+    }
+    if (typeof entry !== 'object') return;
+
+    const text = String(
+      entry.text
+      || entry.transcript
+      || entry.partial
+      || entry.content
+      || entry.final
+      || ''
+    ).trim();
+    if (!text) return;
+    const isFinal = Boolean(
+      entry.isFinal
+      || entry.finalized
+      || entry.done
+      || entry.completed
+      || entry.turnComplete
+      || fallbackFinal
+    );
+    out.push({ text, isFinal });
+  };
+
+  const fallbackFinal = Boolean(message?.serverContent?.turnComplete);
+  const candidates = [
+    message?.serverContent?.inputTranscription,
+    message?.serverContent?.inputTranscript,
+    message?.inputTranscription,
+    message?.inputTranscript,
+    message?.clientContent?.inputTranscription,
+    message?.clientContent?.inputTranscript,
+    message?.transcription?.input,
+    message?.userTranscript
+  ];
+  candidates.forEach((entry) => appendEntry(entry, fallbackFinal));
+  return out;
+}
+
+function buildToolSummary(name, response) {
+  if (!name) return '';
+  if (name === 'request_board_plan') {
+    if (typeof response?.summary === 'string' && response.summary.trim()) return response.summary.trim();
+    if (response?.result === 'ok') {
+      const nodes = Number(response?.nodesAdded) || 0;
+      const edges = Number(response?.edgesAdded) || 0;
+      return `Board plan applied (${nodes} nodes, ${edges} edges).`;
+    }
+    if (response?.result === 'invalid_plan') return 'Board plan was invalid.';
+    if (response?.result === 'missing_api_key') return 'Missing Gemini API key for board planning.';
+  }
+  if (response?.result === 'error') {
+    return `${name} failed: ${response?.error || 'unknown error'}`;
+  }
+  return '';
+}
+
 export function createRealtimeAgent(options = {}) {
   const {
     view,
     onIntent,
     onUserAudio,
     onAiAudio,
+    onUserTurnStart,
+    onUserTranscriptDelta,
+    onUserTurnEnd,
+    onAiAudioChunk,
+    onAiTurnComplete,
     onStatus,
     onError,
     onState
@@ -183,6 +313,10 @@ export function createRealtimeAgent(options = {}) {
   let speechFrames = 0;
   let turnActive = false;
   let aiSpeaking = false;
+  let currentTurn = null;
+  let playbackGain = null;
+  let playbackCursor = 0;
+  let finalizingTurn = false;
   const silenceMs = 900;
   const speechThreshold = 0.018;
 
@@ -193,6 +327,92 @@ export function createRealtimeAgent(options = {}) {
       speaking: aiSpeaking,
       capturing: speechActive
     });
+  };
+
+  const ensureTurn = () => {
+    if (currentTurn) return currentTurn;
+    const now = Date.now();
+    currentTurn = {
+      id: buildTurnId(),
+      startedAt: now,
+      userEndedAt: null,
+      userTranscript: '',
+      aiText: '',
+      toolSummaries: []
+    };
+    if (typeof onUserTurnStart === 'function') {
+      onUserTurnStart({
+        turnId: currentTurn.id,
+        startedAt: now
+      });
+    }
+    return currentTurn;
+  };
+
+  const emitUserTranscript = (text, isFinal = false) => {
+    const nextText = String(text || '').trim();
+    if (!nextText) return;
+    const turn = ensureTurn();
+    if (turn.userTranscript === nextText && !isFinal) return;
+    turn.userTranscript = mergeLiveText(turn.userTranscript, nextText);
+    if (typeof onUserTranscriptDelta === 'function') {
+      onUserTranscriptDelta({
+        turnId: turn.id,
+        text: turn.userTranscript,
+        isFinal: Boolean(isFinal)
+      });
+    }
+    if (isFinal) {
+      markUserTurnEnd();
+    }
+  };
+
+  const markUserTurnEnd = () => {
+    const turn = currentTurn;
+    if (!turn || turn.userEndedAt) return;
+    turn.userEndedAt = Date.now();
+    if (typeof onUserTurnEnd === 'function') {
+      onUserTurnEnd({
+        turnId: turn.id,
+        endedAt: turn.userEndedAt
+      });
+    }
+  };
+
+  const ensurePlaybackOutput = () => {
+    if (!audioContext) return null;
+    if (!playbackGain) {
+      playbackGain = audioContext.createGain();
+      playbackGain.gain.value = 1;
+      playbackGain.connect(audioContext.destination);
+      playbackCursor = audioContext.currentTime;
+    }
+    return playbackGain;
+  };
+
+  const playAiChunk = (chunk) => {
+    if (!chunk?.length || !audioContext) return;
+    const out = ensurePlaybackOutput();
+    if (!out) return;
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().catch(() => {});
+    }
+    const buffer = audioContext.createBuffer(1, chunk.length, OUTPUT_SAMPLE_RATE);
+    buffer.copyToChannel(int16ToFloat32(chunk), 0);
+    const node = audioContext.createBufferSource();
+    node.buffer = buffer;
+    node.connect(out);
+    const now = audioContext.currentTime;
+    const startAt = Math.max(now + 0.01, playbackCursor);
+    node.start(startAt);
+    playbackCursor = startAt + buffer.duration;
+    node.onended = () => {
+      try {
+        node.disconnect();
+      } catch (err) {
+        return;
+      }
+    };
   };
 
   const toolDeclarations = [
@@ -290,22 +510,30 @@ export function createRealtimeAgent(options = {}) {
 
   const appendAiAudio = (data) => {
     try {
+      let chunk = null;
       if (typeof data === 'string') {
-        const chunk = base64ToInt16(data);
-        if (chunk.length) aiChunks.push(chunk);
-        return;
+        chunk = base64ToInt16(data);
       }
-      if (data instanceof ArrayBuffer) {
-        aiChunks.push(new Int16Array(data));
-        return;
+      if (!chunk && data instanceof ArrayBuffer) {
+        chunk = new Int16Array(data);
       }
-      if (ArrayBuffer.isView(data)) {
+      if (!chunk && ArrayBuffer.isView(data)) {
         if (data instanceof Int16Array) {
-          aiChunks.push(data);
-          return;
+          chunk = data;
+        } else {
+          chunk = new Int16Array(data.buffer, data.byteOffset, Math.floor(data.byteLength / 2));
         }
-        aiChunks.push(new Int16Array(data.buffer, data.byteOffset, Math.floor(data.byteLength / 2)));
-        return;
+      }
+      if (!chunk || !chunk.length) return;
+      ensureTurn();
+      aiChunks.push(chunk);
+      playAiChunk(chunk);
+      if (typeof onAiAudioChunk === 'function' && currentTurn?.id) {
+        onAiAudioChunk({
+          turnId: currentTurn.id,
+          pcm16Chunk: chunk,
+          sampleRate: OUTPUT_SAMPLE_RATE
+        });
       }
     } catch (err) {
       // ignore invalid audio
@@ -324,8 +552,41 @@ export function createRealtimeAgent(options = {}) {
   const flushAiAudio = async () => {
     const ai = aiChunks.length ? concatInt16(aiChunks) : null;
     aiChunks = [];
-    if (ai && ai.length && typeof onAiAudio === 'function') {
-      await onAiAudio(pcm16ToWavBlob(ai));
+    if (!ai || !ai.length) return null;
+    const blob = pcm16ToWavBlob(ai);
+    if (typeof onAiAudio === 'function') {
+      await onAiAudio(blob);
+    }
+    return blob;
+  };
+
+  const finalizeTurn = async () => {
+    if (finalizingTurn) return;
+    finalizingTurn = true;
+    const turn = currentTurn;
+    try {
+      if (!turn) {
+        await flushAiAudio();
+        return;
+      }
+      markUserTurnEnd();
+      const audioBlob = await flushAiAudio();
+      const text = String(turn.aiText || '').trim();
+      const toolSummary = turn.toolSummaries.filter(Boolean).join('\n').trim();
+      currentTurn = null;
+      if (typeof onAiTurnComplete === 'function') {
+        await onAiTurnComplete({
+          turnId: turn.id,
+          startedAt: turn.startedAt,
+          userEndedAt: turn.userEndedAt || Date.now(),
+          audioBlob: audioBlob || null,
+          text: text || null,
+          toolSummary: toolSummary || null,
+          userTranscript: turn.userTranscript || ''
+        });
+      }
+    } finally {
+      finalizingTurn = false;
     }
   };
 
@@ -381,6 +642,7 @@ export function createRealtimeAgent(options = {}) {
 
   const handleToolCall = async (toolCall) => {
     if (!session || !toolCall?.functionCalls) return;
+    ensureTurn();
     const responses = [];
     for (const call of toolCall.functionCalls) {
       const args = parseToolArgs(call);
@@ -418,6 +680,10 @@ export function createRealtimeAgent(options = {}) {
       } catch (err) {
         response = { result: 'error', error: err?.message || 'Tool failed' };
       }
+      const summary = buildToolSummary(name, response);
+      if (summary && currentTurn) {
+        currentTurn.toolSummaries.push(summary);
+      }
       responses.push({ id: call.id, name, response });
     }
     if (responses.length && typeof session.sendToolResponse === 'function') {
@@ -427,8 +693,22 @@ export function createRealtimeAgent(options = {}) {
 
   const handleMessage = async (message) => {
     if (!message) return;
+    const userTranscripts = extractInputTranscriptions(message);
+    userTranscripts.forEach((entry) => {
+      emitUserTranscript(entry.text, entry.isFinal);
+    });
+
+    const modelTexts = extractTextParts(message);
+    if (modelTexts.length) {
+      const turn = ensureTurn();
+      modelTexts.forEach((text) => {
+        turn.aiText = mergeLiveText(turn.aiText, text);
+      });
+    }
+
     const chunks = extractAudioChunks(message);
     if (chunks.length) {
+      ensureTurn();
       aiSpeaking = true;
       chunks.forEach((chunk) => appendAiAudio(chunk));
       pushState();
@@ -439,7 +719,7 @@ export function createRealtimeAgent(options = {}) {
     if (message.serverContent?.turnComplete) {
       aiSpeaking = false;
       pushState();
-      await flushAiAudio();
+      await finalizeTurn();
     }
   };
 
@@ -474,6 +754,7 @@ export function createRealtimeAgent(options = {}) {
       if (rms >= speechThreshold) {
         speechFrames = Math.min(MIN_SPEECH_FRAMES, speechFrames + 1);
         if (!speechActive && speechFrames >= MIN_SPEECH_FRAMES) {
+          ensureTurn();
           speechActive = true;
           pushState();
         }
@@ -490,6 +771,7 @@ export function createRealtimeAgent(options = {}) {
       if (speechActive && !withinTail) {
         speechActive = false;
         sendTurnEnd();
+        markUserTurnEnd();
         pushState();
         flushUserAudio();
       }
@@ -504,6 +786,7 @@ export function createRealtimeAgent(options = {}) {
     if (processor) processor.disconnect();
     if (source) source.disconnect();
     if (gainNode) gainNode.disconnect();
+    if (playbackGain) playbackGain.disconnect();
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
     }
@@ -513,6 +796,8 @@ export function createRealtimeAgent(options = {}) {
     processor = null;
     source = null;
     gainNode = null;
+    playbackGain = null;
+    playbackCursor = 0;
     stream = null;
     audioContext = null;
   };
@@ -522,6 +807,9 @@ export function createRealtimeAgent(options = {}) {
     if (!apiKey) throw new Error('Missing API key');
     running = true;
     turnActive = false;
+    currentTurn = null;
+    userChunks = [];
+    aiChunks = [];
     pushState();
     onStatus?.('Realtime listening...', 0);
     const { GoogleGenAI, Modality } = await loadGenAi();
@@ -536,6 +824,7 @@ export function createRealtimeAgent(options = {}) {
           onStatus?.('Realtime stopped.', 1200);
           aiSpeaking = false;
           pushState();
+          finalizeTurn().catch(() => {});
         }
       },
       config: config(Modality)
@@ -549,6 +838,7 @@ export function createRealtimeAgent(options = {}) {
     speechActive = false;
     aiSpeaking = false;
     sendTurnEnd();
+    markUserTurnEnd();
     turnActive = false;
     pushState();
     await stopAudio();
@@ -557,7 +847,7 @@ export function createRealtimeAgent(options = {}) {
     }
     session = null;
     await flushUserAudio();
-    await flushAiAudio();
+    await finalizeTurn();
   };
 
   return {

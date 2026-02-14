@@ -22,6 +22,11 @@
         }
       })();
     </script>
+    <script id="elenweave-runtime-config">
+      window.__ELENWEAVE_RUNTIME__ = {
+        storageMode: 'client'
+      };
+    </script>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/elenweave@0.1.1/dist/styles.css" />
     <link rel="stylesheet" href="./app.css" />
@@ -37,7 +42,19 @@
           </div>
         </a>
 
+        <section class="panel-section panel-section--projects">
+          <div class="section-title">Projects</div>
+          <div class="project-switcher" aria-label="Project switcher">
+            <div class="project-select-wrap">
+              <label class="sr-only" for="projectSelect">Project</label>
+              <select id="projectSelect" aria-label="Project"></select>
+            </div>
+            <button class="btn accent project-add-btn" id="btnNewProject" type="button" aria-label="New project">+</button>
+          </div>
+        </section>
+
         <section class="panel-section panel-section--boards">
+          <div class="section-title">Boards</div>
           <div class="btn-row">
             <button class="btn accent" id="btnNew" type="button">New Board</button>
             <button class="btn ghost collapse-btn" id="panelToggle" type="button">Collapse</button>
