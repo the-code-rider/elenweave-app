@@ -7,6 +7,7 @@ This document summarizes the AI-specific features implemented in the app layer (
   - OpenAI: `gpt-5-mini`
   - Gemini: `gemini-3-flash-preview`
 - Model Config panel supports per-provider API keys + model overrides.
+- In local server mode, AI calls can use server-side keys from env/config via `/api/ai/*` proxy routes.
 
 ## Prompt & Output Contract
 - Detailed system prompt describes the Elenweave environment and available components.

@@ -19,13 +19,25 @@ function extractOpenAIText(json) {
   return '';
 }
 
-export async function callOpenAI({ apiKey, model, instructions, input }) {
-  const res = await fetch('https://api.openai.com/v1/responses', {
+function buildProxyUrl(proxyBaseUrl, path) {
+  const base = String(proxyBaseUrl || '').replace(/\/+$/, '');
+  return `${base}${path}`;
+}
+
+function hasProxy(proxyBaseUrl) {
+  return typeof proxyBaseUrl === 'string' && (proxyBaseUrl.length > 0 || proxyBaseUrl === '');
+}
+
+export async function callOpenAI({ apiKey, proxyBaseUrl, model, instructions, input }) {
+  const useProxy = hasProxy(proxyBaseUrl);
+  const res = await fetch(useProxy ? buildProxyUrl(proxyBaseUrl, '/api/ai/openai/responses') : 'https://api.openai.com/v1/responses', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
+    headers: useProxy
+      ? { 'Content-Type': 'application/json' }
+      : {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
     body: JSON.stringify({
       model,
       instructions,
@@ -52,19 +64,22 @@ export async function callOpenAI({ apiKey, model, instructions, input }) {
   throw new Error('OpenAI: could not extract text from response');
 }
 
-export async function callOpenAIMultimodal({ apiKey, model, prompt, images = [] }) {
+export async function callOpenAIMultimodal({ apiKey, proxyBaseUrl, model, prompt, images = [] }) {
   const content = [{ type: 'input_text', text: prompt }];
   images.forEach((img) => {
     if (!img?.dataUrl) return;
     content.push({ type: 'input_image', image_url: img.dataUrl });
   });
 
-  const res = await fetch('https://api.openai.com/v1/responses', {
+  const useProxy = hasProxy(proxyBaseUrl);
+  const res = await fetch(useProxy ? buildProxyUrl(proxyBaseUrl, '/api/ai/openai/responses') : 'https://api.openai.com/v1/responses', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
+    headers: useProxy
+      ? { 'Content-Type': 'application/json' }
+      : {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
     body: JSON.stringify({
       model,
       input: [{ role: 'user', content }]
@@ -90,16 +105,15 @@ export async function callOpenAIMultimodal({ apiKey, model, prompt, images = [] 
   throw new Error('OpenAI: could not extract text from response');
 }
 
-export async function callOpenAITranscription({ apiKey, file, model = 'whisper-1' }) {
+export async function callOpenAITranscription({ apiKey, proxyBaseUrl, file, model = 'whisper-1' }) {
   const body = new FormData();
   body.append('model', model);
   body.append('file', file, file.name || 'audio');
 
-  const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+  const useProxy = hasProxy(proxyBaseUrl);
+  const res = await fetch(useProxy ? buildProxyUrl(proxyBaseUrl, '/api/ai/openai/transcriptions') : 'https://api.openai.com/v1/audio/transcriptions', {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`
-    },
+    headers: useProxy ? {} : { 'Authorization': `Bearer ${apiKey}` },
     body
   });
 
@@ -114,13 +128,16 @@ export async function callOpenAITranscription({ apiKey, file, model = 'whisper-1
   return { text, response: json };
 }
 
-export async function callOpenAIWithTools({ apiKey, model, instructions, input, tools }) {
-  const res = await fetch('https://api.openai.com/v1/responses', {
+export async function callOpenAIWithTools({ apiKey, proxyBaseUrl, model, instructions, input, tools }) {
+  const useProxy = hasProxy(proxyBaseUrl);
+  const res = await fetch(useProxy ? buildProxyUrl(proxyBaseUrl, '/api/ai/openai/responses') : 'https://api.openai.com/v1/responses', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
+    headers: useProxy
+      ? { 'Content-Type': 'application/json' }
+      : {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
     body: JSON.stringify({
       model,
       instructions,
@@ -151,15 +168,21 @@ function extractGeminiText(json) {
   return parts.map((p) => p.text).filter(Boolean).join('');
 }
 
-export async function callGemini({ apiKey, model, text }) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+export async function callGemini({ apiKey, proxyBaseUrl, model, text }) {
+  const useProxy = hasProxy(proxyBaseUrl);
+  const url = useProxy
+    ? buildProxyUrl(proxyBaseUrl, '/api/ai/gemini/generateContent')
+    : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey
-    },
+    headers: useProxy
+      ? { 'Content-Type': 'application/json' }
+      : {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey
+      },
     body: JSON.stringify({
+      ...(useProxy ? { model } : {}),
       contents: [{ role: 'user', parts: [{ text }] }]
     })
   });
@@ -184,8 +207,11 @@ export async function callGemini({ apiKey, model, text }) {
   return { text: textOut, usage };
 }
 
-export async function callGeminiMultimodal({ apiKey, model, prompt, images = [], audio = [] }) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+export async function callGeminiMultimodal({ apiKey, proxyBaseUrl, model, prompt, images = [], audio = [] }) {
+  const useProxy = hasProxy(proxyBaseUrl);
+  const url = useProxy
+    ? buildProxyUrl(proxyBaseUrl, '/api/ai/gemini/generateContent')
+    : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const parts = [{ text: prompt }];
   images.forEach((img) => {
     if (!img?.base64) return;
@@ -198,11 +224,14 @@ export async function callGeminiMultimodal({ apiKey, model, prompt, images = [],
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey
-    },
+    headers: useProxy
+      ? { 'Content-Type': 'application/json' }
+      : {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey
+      },
     body: JSON.stringify({
+      ...(useProxy ? { model } : {}),
       contents: [{ role: 'user', parts }]
     })
   });
@@ -227,15 +256,21 @@ export async function callGeminiMultimodal({ apiKey, model, prompt, images = [],
   return { text: textOut, usage, response: json };
 }
 
-export async function callGeminiWithTools({ apiKey, model, contents, tools }) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+export async function callGeminiWithTools({ apiKey, proxyBaseUrl, model, contents, tools }) {
+  const useProxy = hasProxy(proxyBaseUrl);
+  const url = useProxy
+    ? buildProxyUrl(proxyBaseUrl, '/api/ai/gemini/generateContent')
+    : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey
-    },
+    headers: useProxy
+      ? { 'Content-Type': 'application/json' }
+      : {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey
+      },
     body: JSON.stringify({
+      ...(useProxy ? { model } : {}),
       contents,
       tools
     })

@@ -60,11 +60,76 @@ const MIME_TO_EXT = new Map([
   ['application/javascript', 'js']
 ]);
 const RUNTIME_CONFIG_SCRIPT_PATTERN = /<script id="elenweave-runtime-config">[\s\S]*?<\/script>/;
+const AI_CONFIG_PATHS = (() => {
+  const explicit = String(process.env.ELENWEAVE_AI_CONFIG || '').trim();
+  if (explicit) {
+    return [path.resolve(explicit)];
+  }
+  return [
+    path.join(APP_DIR, 'config.json'),
+    path.join(APP_DIR, 'server', 'config.json')
+  ];
+})();
 
 function resolveDataRoot() {
   const fromEnv = String(process.env.ELENWEAVE_DATA_DIR || '').trim();
   if (fromEnv) return path.resolve(fromEnv);
   return path.join(os.homedir(), '.elenweave');
+}
+
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+async function loadAiConfig() {
+  for (const file of AI_CONFIG_PATHS) {
+    try {
+      const raw = await fs.readFile(file, 'utf8');
+      const parsed = JSON.parse(raw.replace(/^\uFEFF/, ''));
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return {};
+}
+
+async function resolveAiProviderKey(provider) {
+  const config = await loadAiConfig();
+  if (provider === 'openai') {
+    return firstNonEmptyString(
+      process.env.ELENWEAVE_OPENAI_API_KEY,
+      process.env.OPENAI_API_KEY,
+      config.openaiApiKey,
+      config.openai?.apiKey,
+      config.providers?.openai?.apiKey
+    );
+  }
+  if (provider === 'gemini') {
+    return firstNonEmptyString(
+      process.env.ELENWEAVE_GEMINI_API_KEY,
+      process.env.GEMINI_API_KEY,
+      process.env.GOOGLE_API_KEY,
+      config.geminiApiKey,
+      config.googleApiKey,
+      config.gemini?.apiKey,
+      config.providers?.gemini?.apiKey
+    );
+  }
+  return '';
+}
+
+async function listAvailableAiProviders() {
+  const providers = [];
+  if (await resolveAiProviderKey('openai')) providers.push('openai');
+  if (await resolveAiProviderKey('gemini')) providers.push('gemini');
+  return providers;
 }
 
 function nowTs() {
@@ -766,12 +831,45 @@ function sendStream(res, status, stream, headers = {}) {
   stream.pipe(res);
 }
 
+async function sendUpstreamResponse(res, upstream) {
+  const body = Buffer.from(await upstream.arrayBuffer());
+  const contentType = upstream.headers.get('content-type') || 'application/json; charset=utf-8';
+  res.writeHead(upstream.status, {
+    'Content-Type': contentType,
+    'Content-Length': body.length,
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,PUT,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  });
+  res.end(body);
+}
+
 function sendLockError(res, err) {
   if (err?.code === 'LockTimeout') {
     sendJson(res, 409, { error: 'Conflict', message: err.message || 'Resource lock timeout.' });
     return true;
   }
   return false;
+}
+
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    let total = 0;
+    const chunks = [];
+    req.on('data', (chunk) => {
+      total += chunk.length;
+      if (total > MAX_BODY_BYTES) {
+        reject(new Error('Body too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      resolve(Buffer.concat(chunks));
+    });
+    req.on('error', reject);
+  });
 }
 
 function readJsonBody(req) {
@@ -830,6 +928,89 @@ async function handleApi(req, res, url) {
       'Access-Control-Allow-Headers': 'Content-Type'
     });
     res.end();
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/ai/providers') {
+    const providers = await listAvailableAiProviders();
+    sendJson(res, 200, { providers });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/ai/openai/responses') {
+    try {
+      const apiKey = await resolveAiProviderKey('openai');
+      if (!apiKey) {
+        sendJson(res, 503, { error: 'MissingKey', message: 'OpenAI key not configured on server.' });
+        return;
+      }
+      const rawBody = await readRawBody(req);
+      const upstream = await fetch('https://api.openai.com/v1/responses', {
+        method: 'POST',
+        headers: {
+          'Content-Type': req.headers['content-type'] || 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: rawBody.length ? rawBody : undefined
+      });
+      await sendUpstreamResponse(res, upstream);
+    } catch (err) {
+      sendJson(res, 502, { error: 'UpstreamError', message: err.message || 'OpenAI request failed.' });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/ai/openai/transcriptions') {
+    try {
+      const apiKey = await resolveAiProviderKey('openai');
+      if (!apiKey) {
+        sendJson(res, 503, { error: 'MissingKey', message: 'OpenAI key not configured on server.' });
+        return;
+      }
+      const rawBody = await readRawBody(req);
+      const upstream = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': req.headers['content-type'] || 'application/octet-stream',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: rawBody.length ? rawBody : undefined
+      });
+      await sendUpstreamResponse(res, upstream);
+    } catch (err) {
+      sendJson(res, 502, { error: 'UpstreamError', message: err.message || 'OpenAI transcription failed.' });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/ai/gemini/generateContent') {
+    try {
+      const apiKey = await resolveAiProviderKey('gemini');
+      if (!apiKey) {
+        sendJson(res, 503, { error: 'MissingKey', message: 'Gemini key not configured on server.' });
+        return;
+      }
+      const body = await readJsonBody(req);
+      const model = String(body?.model || '').trim();
+      if (!model) {
+        sendJson(res, 400, { error: 'InvalidRequest', message: 'Missing model for Gemini request.' });
+        return;
+      }
+      const payload = { ...body };
+      delete payload.model;
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+      const upstream = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
+        body: JSON.stringify(payload)
+      });
+      await sendUpstreamResponse(res, upstream);
+    } catch (err) {
+      sendJson(res, 502, { error: 'UpstreamError', message: err.message || 'Gemini request failed.' });
+    }
     return;
   }
 

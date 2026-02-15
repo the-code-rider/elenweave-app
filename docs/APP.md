@@ -42,7 +42,7 @@ The app is an Elenweave workspace with optional local server persistence.
 ### AI + realtime
 
 - `app/llm_clients.js`
-  - OpenAI/Gemini request helpers (text + multimodal).
+  - OpenAI/Gemini request helpers (text + multimodal), with optional local `/api/ai/*` proxy in server mode.
 - `app/realtime_audio.js`
   - Gemini realtime audio + tool-call handling.
 
@@ -90,6 +90,11 @@ Server-side disk layout is documented in `docs/SERVER.md`.
 3. Loads active board payload into the view.
 4. User actions mutate graph state; persistence is scheduled.
 5. AI actions return plans that add/update nodes and edges.
+
+## AI key resolution
+
+- In client mode, AI keys are browser-local (`localStorage`) as before.
+- In server mode, the app checks `/api/ai/providers` and can use server-side keys via `/api/ai/*` without requiring browser-stored API keys.
 
 ## Notes
 

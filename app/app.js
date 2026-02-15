@@ -202,6 +202,33 @@ async function apiFetch(path, options = {}) {
   return response.json().catch(() => null);
 }
 
+function hasServerAiProvider(provider) {
+  if (!provider) return false;
+  return serverAiProviders.has(provider);
+}
+
+function resolveAiProxyBaseUrl(provider) {
+  if (!IS_SERVER_MODE) return null;
+  if (!hasServerAiProvider(provider)) return null;
+  return SERVER_BASE || '';
+}
+
+async function refreshServerAiProviders() {
+  serverAiProviders = new Set();
+  if (!IS_SERVER_MODE) return;
+  try {
+    const payload = await apiFetch('/api/ai/providers');
+    const providers = Array.isArray(payload?.providers) ? payload.providers : [];
+    providers.forEach((provider) => {
+      if (provider === 'openai' || provider === 'gemini') {
+        serverAiProviders.add(provider);
+      }
+    });
+  } catch (err) {
+    serverAiProviders = new Set();
+  }
+}
+
 let selectedNodeId = null;
 let selectedEdgeId = null;
 let aiContextNodeIds = new Set();
@@ -219,6 +246,7 @@ let realtimeAudioStatusAt = 0;
 let aiRequestPending = false;
 let navFocusArmed = false;
 let navFocusTimer = null;
+let serverAiProviders = new Set();
 
 const AI_FOLLOW_UP_COMPONENTS = new Set(['TextInput', 'OptionPicker']);
 const NAV_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab']);
@@ -853,7 +881,8 @@ async function handleSend() {
     const prompt = String(values.prompt || '').trim();
     const provider = loadProvider();
     const apiKey = readApiKey(provider);
-    if (!apiKey) {
+    const proxyBaseUrl = resolveAiProxyBaseUrl(provider);
+    if (!apiKey && proxyBaseUrl == null) {
       setStatus('Add an API key in Model Matrix.', 1800);
       return;
     }
@@ -876,6 +905,7 @@ async function handleSend() {
       const result = await requestAiPlan({
         provider,
         apiKey,
+        proxyBaseUrl,
         model,
         message,
         attachments
@@ -1947,14 +1977,19 @@ function syncApiKeyInput() {
   const provider = getSelectedProvider();
   const key = readApiKey(provider);
   const model = readModel(provider);
+  const serverProviderEnabled = hasServerAiProvider(provider);
   els.apiKeyInput.value = key || '';
   if (els.modelInput) {
     els.modelInput.value = model || '';
   }
   if (els.apiKeyNote) {
-    els.apiKeyNote.textContent = key
-      ? `Saved locally for ${provider === 'openai' ? 'OpenAI' : 'Gemini'}.`
-      : 'Stored locally in this browser.';
+    if (serverProviderEnabled) {
+      els.apiKeyNote.textContent = 'Server-side AI key detected from local config/env. Browser key is optional.';
+    } else {
+      els.apiKeyNote.textContent = key
+        ? `Saved locally for ${provider === 'openai' ? 'OpenAI' : 'Gemini'}.`
+        : 'Stored locally in this browser.';
+    }
   }
   if (els.modelNote) {
     const fallback = AI_DEFAULT_MODELS[provider] || AI_DEFAULT_MODELS.openai;
@@ -2833,7 +2868,7 @@ function buildAiAttachmentContext(attachments) {
   return context;
 }
 
-async function requestAiPlan({ provider, apiKey, model, message, attachments }) {
+async function requestAiPlan({ provider, apiKey, proxyBaseUrl = null, model, message, attachments }) {
   if (attachments.file && !attachments.kind) {
     throw new Error('Unsupported file type. Please upload an image, audio, or text/code file.');
   }
@@ -2850,6 +2885,7 @@ async function requestAiPlan({ provider, apiKey, model, message, attachments }) 
       setStatus('Transcribing audio...', 0);
       const transcript = await callOpenAITranscription({
         apiKey,
+        proxyBaseUrl,
         file: attachments.file,
         model: AI_TRANSCRIBE_MODEL
       });
@@ -2863,27 +2899,29 @@ async function requestAiPlan({ provider, apiKey, model, message, attachments }) 
       const dataUrl = await readFileAsDataUrl(attachments.file);
       return callOpenAIMultimodal({
         apiKey,
+        proxyBaseUrl,
         model,
         prompt: aiPrompt,
         images: [{ dataUrl }]
       });
     }
-    return callOpenAI({ apiKey, model, instructions: '', input: aiPrompt });
+    return callOpenAI({ apiKey, proxyBaseUrl, model, instructions: '', input: aiPrompt });
   }
 
   const aiPrompt = buildAiPrompt(message, context);
   if (attachments.kind === 'image' || attachments.kind === 'audio') {
     const images = attachments.kind === 'image' ? [await fileToInlineData(attachments.file)] : [];
     const audio = attachments.kind === 'audio' ? [await fileToInlineData(attachments.file)] : [];
-    return callGeminiMultimodal({ apiKey, model, prompt: aiPrompt, images, audio });
+    return callGeminiMultimodal({ apiKey, proxyBaseUrl, model, prompt: aiPrompt, images, audio });
   }
-  return callGemini({ apiKey, model, text: aiPrompt });
+  return callGemini({ apiKey, proxyBaseUrl, model, text: aiPrompt });
 }
 
 async function handleAiFollowUp(node) {
   const provider = loadProvider();
   const apiKey = readApiKey(provider);
-  if (!apiKey) {
+  const proxyBaseUrl = resolveAiProxyBaseUrl(provider);
+  if (!apiKey && proxyBaseUrl == null) {
     setStatus('Add an API key in Model Matrix.', 1800);
     return;
   }
@@ -2903,6 +2941,7 @@ async function handleAiFollowUp(node) {
     const result = await requestAiPlan({
       provider,
       apiKey,
+      proxyBaseUrl,
       model,
       message,
       attachments
@@ -2951,12 +2990,14 @@ async function handleRealtimeIntent(intent) {
   if (!trimmed) return { result: 'empty_intent' };
   const provider = 'gemini';
   const apiKey = readApiKey(provider);
-  if (!apiKey) return { result: 'missing_api_key' };
+  const proxyBaseUrl = resolveAiProxyBaseUrl(provider);
+  if (!apiKey && proxyBaseUrl == null) return { result: 'missing_api_key' };
   const model = readModel(provider) || AI_DEFAULT_MODELS[provider] || AI_DEFAULT_MODELS.openai;
   const attachments = { file: null, kind: null };
   const result = await requestAiPlan({
     provider,
     apiKey,
+    proxyBaseUrl,
     model,
     message: trimmed,
     attachments
@@ -4835,6 +4876,7 @@ function restoreUiState() {
 async function initApp() {
   const useServer = await ensureServerMode();
   const restored = await restoreWorkspace();
+  await refreshServerAiProviders();
   if (!restored && !useServer) {
     await seedBoards();
   }

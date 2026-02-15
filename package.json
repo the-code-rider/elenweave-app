@@ -1,0 +1,13 @@
+{
+  "name": "elenweave-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "server": "node server/index.js",
+    "start": "npm run server",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
