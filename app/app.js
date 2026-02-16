@@ -272,6 +272,11 @@ let aiRequestPending = false;
 let navFocusArmed = false;
 let navFocusTimer = null;
 let serverAiProviders = new Set();
+let nodeContextMenu = {
+  el: null,
+  nodeId: null,
+  open: false
+};
 
 const AI_FOLLOW_UP_COMPONENTS = new Set(['TextInput', 'OptionPicker']);
 const NAV_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab']);
@@ -758,16 +763,25 @@ window.addEventListener('keydown', (event) => {
   closeModelMatrix();
 });
 window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  closeNodeContextMenu();
+});
+window.addEventListener('keydown', (event) => {
   if (isEditableElement(event.target)) return;
   if (!NAV_KEYS.has(event.key)) return;
   armNavFocus();
 }, true);
 document.addEventListener('pointerdown', (event) => {
-  const target = event.target instanceof HTMLElement ? event.target : null;
-  if (!target?.closest?.('.ew-nav-ui')) return;
+  const target = event.target instanceof Element ? event.target : null;
+  if (!isNodeContextMenuTarget(target)) {
+    closeNodeContextMenu();
+  }
+  const htmlTarget = target instanceof HTMLElement ? target : null;
+  if (!htmlTarget?.closest?.('.ew-nav-ui')) return;
   armNavFocus();
 }, true);
 workspace.on('graph:active', (graph) => {
+  closeNodeContextMenu();
   selectedNodeId = null;
   selectedEdgeId = null;
   realtimeTurnNodes = new Map();
@@ -792,6 +806,7 @@ workspace.on('graph:active', (graph) => {
 });
 
 view.on('selection', (node) => {
+  closeNodeContextMenu();
   selectedNodeId = node?.id || null;
   selectedEdgeId = null;
   updateEdgeFields(null);
@@ -809,6 +824,7 @@ view.on('selection', (node) => {
 });
 
 view.on('edge:selection', (edge) => {
+  closeNodeContextMenu();
   selectedEdgeId = edge?.id || null;
   selectedNodeId = null;
   updateEdgeFields(edge);
@@ -825,6 +841,20 @@ if (view?.canvas) {
   view.canvas.addEventListener('pointerdown', captureDragStart);
 }
 if (view?.overlay) {
+  view.overlay.addEventListener('contextmenu', (event) => {
+    const nodeId = getNodeIdFromEventTarget(event.target);
+    if (!nodeId) {
+      closeNodeContextMenu();
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    openNodeContextMenu({
+      nodeId,
+      clientX: event.clientX,
+      clientY: event.clientY
+    });
+  }, true);
   view.overlay.addEventListener('pointerdown', captureResizeStart, true);
   view.overlay.addEventListener('pointerdown', captureDragStart, true);
 }
@@ -1979,6 +2009,255 @@ function initComponentSelect() {
     els.componentPicker.appendChild(option);
   });
   currentComponentKey = COMPONENT_CONFIG[0]?.key || null;
+}
+
+function getNodeIdFromEventTarget(target) {
+  if (!(target instanceof Element)) return null;
+  const nodeEl = target.closest('[data-ew-node-id]');
+  if (!nodeEl) return null;
+  const nodeId = String(nodeEl.getAttribute('data-ew-node-id') || '').trim();
+  if (!nodeId) return null;
+  if (!view?.graph?.getNode(nodeId)) return null;
+  return nodeId;
+}
+
+function isNodeContextMenuTarget(target) {
+  return Boolean(target instanceof Element && target.closest('.ew-node-context-menu'));
+}
+
+function ensureNodeContextMenu() {
+  if (nodeContextMenu.el) return nodeContextMenu.el;
+
+  const menu = document.createElement('div');
+  menu.className = 'ew-node-context-menu is-hidden';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-hidden', 'true');
+  menu.setAttribute('aria-label', 'Node actions');
+
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'ew-node-context-menu__item';
+  copyBtn.dataset.action = 'copy';
+  copyBtn.textContent = 'Copy';
+
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.className = 'ew-node-context-menu__item';
+  editBtn.dataset.action = 'edit';
+  editBtn.textContent = 'Edit';
+
+  menu.append(copyBtn, editBtn);
+  menu.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+  });
+  menu.addEventListener('pointerdown', (event) => {
+    event.stopPropagation();
+  });
+  menu.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target.closest('[data-action]') : null;
+    if (!(target instanceof HTMLElement)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const action = target.dataset.action;
+    if (action === 'copy') {
+      copyNodeContextTarget();
+      return;
+    }
+    if (action === 'edit') {
+      editNodeContextTarget();
+    }
+  });
+
+  document.body.appendChild(menu);
+  nodeContextMenu.el = menu;
+  return menu;
+}
+
+function openNodeContextMenu(options = {}) {
+  const nodeId = String(options.nodeId || '').trim();
+  if (!nodeId) return;
+  const menu = ensureNodeContextMenu();
+  const margin = 8;
+
+  nodeContextMenu.nodeId = nodeId;
+  nodeContextMenu.open = true;
+
+  menu.classList.remove('is-hidden');
+  menu.setAttribute('aria-hidden', 'false');
+  menu.style.left = '0px';
+  menu.style.top = '0px';
+
+  const width = menu.offsetWidth || 140;
+  const height = menu.offsetHeight || 80;
+  const x = Math.min(
+    window.innerWidth - width - margin,
+    Math.max(margin, Math.round(options.clientX || 0))
+  );
+  const y = Math.min(
+    window.innerHeight - height - margin,
+    Math.max(margin, Math.round(options.clientY || 0))
+  );
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+}
+
+function closeNodeContextMenu() {
+  if (!nodeContextMenu.el) return;
+  nodeContextMenu.nodeId = null;
+  nodeContextMenu.open = false;
+  nodeContextMenu.el.classList.add('is-hidden');
+  nodeContextMenu.el.setAttribute('aria-hidden', 'true');
+}
+
+function toCopyText(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item ?? '').trim())
+      .filter(Boolean)
+      .join(', ');
+  }
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') return '';
+  return String(value).trim();
+}
+
+function firstNonEmptyText(...values) {
+  for (const value of values) {
+    const text = toCopyText(value);
+    if (text) return text;
+  }
+  return '';
+}
+
+function extractNodeVisibleText(node) {
+  if (!node) return '';
+  const data = node.data || {};
+  const props = node.props || {};
+
+  if (node.type === 'html-text') {
+    return firstNonEmptyText(node.text, props.title, node.id);
+  }
+
+  switch (node.component) {
+    case 'OptionPicker': {
+      const label = toCopyText(props.label);
+      const choice = toCopyText(data.choice);
+      if (label && choice) return `${label}: ${choice}`;
+      return firstNonEmptyText(choice, label, props.title, node.id);
+    }
+    case 'TextInput': {
+      const label = toCopyText(props.label);
+      const value = toCopyText(data.value);
+      if (label && value) return `${label}: ${value}`;
+      return firstNonEmptyText(value, label, props.title, node.id);
+    }
+    case 'DateTimeInput': {
+      const label = toCopyText(props.label);
+      const value = toCopyText(data.value);
+      if (label && value) return `${label}: ${value}`;
+      return firstNonEmptyText(value, label, props.title, node.id);
+    }
+    case 'SliderInput': {
+      const label = toCopyText(props.label);
+      const value = toCopyText(data.value);
+      if (label && value) return `${label}: ${value}`;
+      return firstNonEmptyText(value, label, props.title, node.id);
+    }
+    case 'MultiChoice': {
+      const selected = toCopyText(data.selected);
+      return firstNonEmptyText(selected, props.label, props.title, node.id);
+    }
+    case 'CodeSnippet':
+      return firstNonEmptyText(data.code, props.filename, props.title, node.id);
+    case 'MarkdownBlock':
+      return firstNonEmptyText(data.markdown, props.title, node.id);
+    case 'MermaidBlock':
+      return firstNonEmptyText(data.mermaid, props.title, node.id);
+    case 'SvgBlock':
+      return firstNonEmptyText(data.svg, props.title, node.id);
+    case 'ImageViewer':
+    case 'VideoPlayer':
+    case 'AudioPlayer':
+      return firstNonEmptyText(props.title, data.assetName, data.src, node.id);
+    default:
+      return firstNonEmptyText(
+        node.text,
+        props.title,
+        props.label,
+        data.value,
+        data.assetName,
+        node.id
+      );
+  }
+}
+
+async function writeClipboardText(text) {
+  const value = String(text ?? '');
+  if (navigator?.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch (err) {
+      // Fallback below.
+    }
+  }
+  const input = document.createElement('textarea');
+  input.value = value;
+  input.setAttribute('readonly', 'true');
+  input.style.position = 'fixed';
+  input.style.left = '-9999px';
+  input.style.opacity = '0';
+  input.style.pointerEvents = 'none';
+  document.body.appendChild(input);
+  input.focus();
+  input.select();
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch (err) {
+    copied = false;
+  }
+  document.body.removeChild(input);
+  return copied;
+}
+
+async function copyNodeContentToClipboard(nodeId) {
+  if (!nodeId || !view?.graph) return false;
+  const node = view.graph.getNode(nodeId);
+  if (!node) return false;
+  const content = extractNodeVisibleText(node);
+  return writeClipboardText(content);
+}
+
+async function copyNodeContextTarget() {
+  const nodeId = nodeContextMenu.nodeId;
+  closeNodeContextMenu();
+  if (!nodeId) return;
+  const copied = await copyNodeContentToClipboard(nodeId);
+  if (copied) {
+    setStatus('Copied node content.', 1400);
+    return;
+  }
+  setStatus('Copy failed.', 1600);
+}
+
+function editNodeContextTarget() {
+  const nodeId = nodeContextMenu.nodeId;
+  closeNodeContextMenu();
+  if (!nodeId || !view?.graph) return;
+  const node = view.graph.getNode(nodeId);
+  if (!node) {
+    setStatus('Node not found.', 1400);
+    return;
+  }
+  const configKey = node.type === 'html-text' ? 'HtmlText' : node.component || null;
+  if (!configKey || !COMPONENT_LOOKUP.get(configKey)) {
+    setStatus('Selected node is not editable from form.', 1800);
+    return;
+  }
+  view.selectNode(nodeId);
+  syncFormToNode(node);
+  setStatus('Node ready to edit.', 1400);
 }
 
 function applyContextMenuConfig() {
