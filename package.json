@@ -1,6 +1,6 @@
 {
   "name": "elenweave-app",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.3",
   "description": "Local visual canvas app for humans and coding agents.",
   "type": "module",
   "bin": {
@@ -15,6 +15,14 @@
   },
   "files": [
     "app",
+    "!app/favicons",
+    "!app/logo.webp",
+    "!app/logo.png",
+    "!app/favicon.ico",
+    "!app/favicon-*.png",
+    "!app/apple-touch-icon.png",
+    "!app/android-chrome-*.png",
+    "!app/site.webmanifest",
     "server",
     "README.md"
   ],

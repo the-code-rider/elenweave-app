@@ -1,0 +1,8 @@
+app/favicons/
+app/logo.webp
+app/logo.png
+app/favicon.ico
+app/favicon-*.png
+app/apple-touch-icon.png
+app/android-chrome-*.png
+app/site.webmanifest

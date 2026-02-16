@@ -8,15 +8,33 @@
 
 # Elenweave
 
-Elenweave is a shared canvas where humans and AI agents can think, sketch, and build together.
+Give your coding agents a canvas to express themselves.
 
-It is designed for expressive work: drop ideas as nodes, connect them, attach media, and let AI turn prompts into structured plans on the same board. The goal is not just chat output, but visible thinking you can edit, reorganize, and evolve.
+Elenweave is a shared canvas for coding agents and humans to collaborate. The core app exposes a surface for coding agents to express complex ideas as rich graph on canvas. 
+The agent controls the canvas via skill. While a human can manipulate the canvas by manualy placing nodes or by using an embedded AI. 
+
+> This project is early stage, and it likely has bugs. It has only tested against codex so far. However the skill is general and should work with other agents.
+
+## Goal
+Move coding agents beyond terminal and markdown file. Terminal is still the fastest way to build a software app, but it is not the right surface to build an understanding about the code.
+Coding agents have accelarated the pace of development. They have also accelarated the 
 
 ## What It Is
 
 - A visual workspace for projects and boards
 - A collaboration surface for human input + AI-generated structure
 - A lightweight local app with file-backed server mode or browser-only client mode
+
+## Use Cases
+
+- You can control the app via coding agent. That is ask the agent to create documentation on a specific topic or a plan and it will update the app using the skill
+- You can directly use the canvas in your browser. 
+- The same board and can be read and updated by an agent and human
+
+## Modes
+- You can either run it locally or self host as server, in which case it will use file system as storage block.
+- Or you can run a client only mode, in which case it will use IndexedDB as storage. 
+More details can be found below.
 
 ## Core Capabilities
 
@@ -25,7 +43,7 @@ It is designed for expressive work: drop ideas as nodes, connect them, attach me
 - Ask AI to generate board actions using the `ew-actions/v1` plan contract
 - Add follow-up AI interactions through `TextInput` and `OptionPicker` nodes
 - Attach image/audio/text assets to nodes
-- Use realtime Gemini voice mode from the app panel
+- Use realtime Gemini voice mode from the app panel (experimental)
 - Persist work by project/board (server mode) or IndexedDB (client mode)
 
 ## Run Locally
@@ -49,10 +67,11 @@ elenweave-app
 ```
 
 Install Codex skill:
+skill repo: https://github.com/the-code-rider/elenweave-skill
+
 
 ```bash
 npx skills add the-code-rider/elenweave-skill
-# repo: https://github.com/the-code-rider/elenweave-skill.git
 ```
 
 Default behavior with no flags (`npx elenweave-app`):
