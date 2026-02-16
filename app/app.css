@@ -136,15 +136,15 @@ body {
     height: 40px;
     border-radius: 12px;
     border: 1px solid var(--app-border);
-    background: none;
+    background: #ffffff;
     box-shadow: inset 0 0 12px rgba(95, 234, 255, 0.2);
     object-fit: cover;
 }
 
 .app-brand h1 {
-    margin: 0 0 4px;
-    font-size: 1.4rem;
-    letter-spacing: 0.06em;
+    margin: 0;
+    font-size: 1.1rem;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--app-accent);
 }

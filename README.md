@@ -24,6 +24,12 @@ It is designed for expressive work: drop ideas as nodes, connect them, attach me
 npm run server
 ```
 
+Or with CLI:
+
+```bash
+npx elenweave-server
+```
+
 Open:
 
 ```text
@@ -51,6 +57,9 @@ Accepted params:
 |---|---|---|---|
 | `storageMode` | `'client' \| 'server'` | Yes | Storage source-of-truth mode. |
 | `serverBase` | `string` | No | Base URL for server API in `server` mode. Defaults to same-origin (`''`). |
+| `seedReadOnlyMode` | `'off' \| 'all' \| 'projects'` | No | Hosted seed read-only mode injected by server. |
+| `seedReadOnlyProjectIds` | `string[]` | No | Read-only project IDs when `seedReadOnlyMode='projects'`. |
+| `readOnlyFork` | `'off' \| 'local'` | No | Read-only edit behavior (`local` = browser IndexedDB fork). |
 
 ### AI Config File (`config.json`)
 
@@ -81,6 +90,12 @@ Accepted params:
 | `ELENWEAVE_DATA_DIR` | `~/.elenweave` | Data root for projects/boards/assets |
 | `ELENWEAVE_LOCK_TIMEOUT_MS` | `5000` | Lock wait timeout (ms) |
 | `ELENWEAVE_LOCK_RETRY_MS` | `50` | Lock retry interval (ms) |
+| `ELENWEAVE_SEED_DIR` | _(unset)_ | Native seed directory (data-root snapshot) |
+| `ELENWEAVE_SEED_JSON` | _(unset)_ | Portable JSON seed file |
+| `ELENWEAVE_SEED_POLICY` | `first-run` | Seed apply policy: `first-run`, `always`, `versioned` |
+| `ELENWEAVE_SEED_VERSION` | _(unset)_ | Seed version used with `versioned` policy |
+| `ELENWEAVE_SEED_READONLY` | `off` | Seed read-only mode: `off`, `all`, `projects` |
+| `ELENWEAVE_READONLY_FORK` | `local` | Read-only fork behavior: `local` or `off` |
 | `ELENWEAVE_AI_CONFIG` | _(unset)_ | Path to AI config JSON |
 | `ELENWEAVE_OPENAI_API_KEY` | _(unset)_ | Preferred OpenAI key env var |
 | `OPENAI_API_KEY` | _(unset)_ | OpenAI key env var |

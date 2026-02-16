@@ -2,7 +2,7 @@ import http from 'node:http';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 
@@ -13,6 +13,7 @@ const DATA_ROOT = resolveDataRoot();
 const PROJECTS_DIR = path.join(DATA_ROOT, 'projects');
 const LOCKS_DIR = path.join(DATA_ROOT, 'locks');
 const INDEX_FILE = path.join(DATA_ROOT, 'index.json');
+const SEED_STATE_FILE = path.join(DATA_ROOT, '.seed-state.json');
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number.parseInt(process.env.PORT || '8787', 10);
 const MAX_BODY_BYTES = 12 * 1024 * 1024;
@@ -60,6 +61,9 @@ const MIME_TO_EXT = new Map([
   ['application/javascript', 'js']
 ]);
 const RUNTIME_CONFIG_SCRIPT_PATTERN = /<script id="elenweave-runtime-config">[\s\S]*?<\/script>/;
+const SEED_POLICY_VALUES = new Set(['first-run', 'always', 'versioned']);
+const SEED_READONLY_VALUES = new Set(['off', 'all', 'projects']);
+const READONLY_FORK_VALUES = new Set(['off', 'local']);
 const AI_CONFIG_PATHS = (() => {
   const explicit = String(process.env.ELENWEAVE_AI_CONFIG || '').trim();
   if (explicit) {
@@ -70,11 +74,65 @@ const AI_CONFIG_PATHS = (() => {
     path.join(APP_DIR, 'server', 'config.json')
   ];
 })();
+const SEED_OPTIONS = parseSeedOptions();
+const READ_ONLY_CONFIG = {
+  mode: 'off',
+  projectIds: new Set(),
+  fork: SEED_OPTIONS.readOnlyFork
+};
 
 function resolveDataRoot() {
   const fromEnv = String(process.env.ELENWEAVE_DATA_DIR || '').trim();
   if (fromEnv) return path.resolve(fromEnv);
   return path.join(os.homedir(), '.elenweave');
+}
+
+function normalizeSeedPolicy(value) {
+  const mode = String(value || '').trim().toLowerCase();
+  return SEED_POLICY_VALUES.has(mode) ? mode : 'first-run';
+}
+
+function normalizeSeedReadOnly(value) {
+  const mode = String(value || '').trim().toLowerCase();
+  return SEED_READONLY_VALUES.has(mode) ? mode : 'off';
+}
+
+function normalizeReadOnlyFork(value) {
+  const mode = String(value || '').trim().toLowerCase();
+  return READONLY_FORK_VALUES.has(mode) ? mode : 'local';
+}
+
+function parseSeedOptions() {
+  const seedDir = String(process.env.ELENWEAVE_SEED_DIR || '').trim();
+  const seedJson = String(process.env.ELENWEAVE_SEED_JSON || '').trim();
+  const readOnlyModeRaw = String(process.env.ELENWEAVE_SEED_READONLY || '').trim();
+  const readOnlyForkRaw = String(process.env.ELENWEAVE_READONLY_FORK || '').trim();
+  if (seedDir && seedJson) {
+    throw new Error('Configure either ELENWEAVE_SEED_DIR or ELENWEAVE_SEED_JSON, not both.');
+  }
+  return {
+    seedDir: seedDir ? path.resolve(seedDir) : '',
+    seedJson: seedJson ? path.resolve(seedJson) : '',
+    policy: normalizeSeedPolicy(process.env.ELENWEAVE_SEED_POLICY),
+    version: String(process.env.ELENWEAVE_SEED_VERSION || '').trim(),
+    readOnlyMode: normalizeSeedReadOnly(readOnlyModeRaw),
+    readOnlyFork: normalizeReadOnlyFork(readOnlyForkRaw),
+    hasReadOnlyModeOverride: Boolean(readOnlyModeRaw),
+    hasReadOnlyForkOverride: Boolean(readOnlyForkRaw)
+  };
+}
+
+function fileExists(filePath) {
+  return fs.access(filePath).then(() => true).catch(() => false);
+}
+
+async function readText(filePath) {
+  return fs.readFile(filePath, 'utf8');
+}
+
+async function hashFileSha1(filePath) {
+  const body = await fs.readFile(filePath);
+  return createHash('sha1').update(body).digest('hex');
 }
 
 function firstNonEmptyString(...values) {
@@ -310,7 +368,7 @@ async function writeJsonAtomic(filePath, payload) {
 async function readJson(filePath, fallbackValue) {
   try {
     const raw = await fs.readFile(filePath, 'utf8');
-    return JSON.parse(raw);
+    return JSON.parse(raw.replace(/^\uFEFF/, ''));
   } catch {
     return fallbackValue;
   }
@@ -415,6 +473,338 @@ async function saveBoardPayload(projectId, boardId, payload) {
   const next = normalizeBoardPayload(boardId, payload);
   await writeJsonAtomic(boardPath(projectId, boardId), next);
   return next;
+}
+
+function sanitizeSeedProjectIds(ids) {
+  if (!Array.isArray(ids)) return [];
+  return ids.map((id) => String(id || '').trim()).filter((id) => isValidId(id));
+}
+
+function normalizeSeedManifest(raw = {}) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const readOnly = source.readOnly && typeof source.readOnly === 'object' ? source.readOnly : {};
+  const readOnlyMode = normalizeSeedReadOnly(readOnly.mode || source.readOnlyMode || source.seedReadOnlyMode);
+  const readOnlyProjectIds = sanitizeSeedProjectIds(readOnly.projectIds || source.readOnlyProjectIds || []);
+  const seedVersion = String(
+    source.seedVersion || source.version || source.seed?.version || ''
+  ).trim();
+  const readOnlyFork = normalizeReadOnlyFork(source.readOnlyFork || source.seedReadOnlyFork || SEED_OPTIONS.readOnlyFork);
+  return {
+    seedVersion,
+    readOnlyMode,
+    readOnlyProjectIds,
+    readOnlyFork
+  };
+}
+
+function applyReadOnlyConfig(manifest = {}, mappedProjectIds = []) {
+  const normalizedManifest = normalizeSeedManifest(manifest);
+  const mode = SEED_OPTIONS.hasReadOnlyModeOverride
+    ? SEED_OPTIONS.readOnlyMode
+    : normalizedManifest.readOnlyMode;
+  const fork = SEED_OPTIONS.hasReadOnlyForkOverride
+    ? SEED_OPTIONS.readOnlyFork
+    : normalizedManifest.readOnlyFork;
+  READ_ONLY_CONFIG.mode = mode;
+  READ_ONLY_CONFIG.fork = fork;
+  READ_ONLY_CONFIG.projectIds = new Set();
+  if (mode === 'projects') {
+    const fromManifest = sanitizeSeedProjectIds(normalizedManifest.readOnlyProjectIds);
+    const fromMapped = sanitizeSeedProjectIds(mappedProjectIds);
+    const chosen = fromMapped.length ? fromMapped : fromManifest;
+    chosen.forEach((id) => READ_ONLY_CONFIG.projectIds.add(id));
+  }
+}
+
+function isReadOnlyProject(projectId) {
+  if (READ_ONLY_CONFIG.mode === 'all') return true;
+  if (READ_ONLY_CONFIG.mode !== 'projects') return false;
+  return Boolean(projectId && READ_ONLY_CONFIG.projectIds.has(projectId));
+}
+
+function sendReadOnlyError(res, projectId = '', boardId = '') {
+  sendJson(res, 403, {
+    error: 'ReadOnlySeed',
+    message: 'Seeded data is read-only on this server.',
+    projectId: projectId || undefined,
+    boardId: boardId || undefined,
+    forkHint: READ_ONLY_CONFIG.fork
+  });
+}
+
+async function readSeedState() {
+  const state = await readJson(SEED_STATE_FILE, null);
+  if (!state || typeof state !== 'object') return null;
+  return state;
+}
+
+async function writeSeedState(state) {
+  await writeJsonAtomic(SEED_STATE_FILE, {
+    sourceType: String(state?.sourceType || ''),
+    sourcePath: String(state?.sourcePath || ''),
+    appliedAt: Number(state?.appliedAt || nowTs()),
+    seedVersion: String(state?.seedVersion || ''),
+    contentHash: String(state?.contentHash || '')
+  });
+}
+
+async function hasAnyProjects() {
+  const index = await readIndex();
+  return Array.isArray(index.projects) && index.projects.length > 0;
+}
+
+async function clearDataStore() {
+  await fs.rm(PROJECTS_DIR, { recursive: true, force: true });
+  await fs.mkdir(PROJECTS_DIR, { recursive: true });
+  await writeIndex({ projects: [] });
+}
+
+async function copyNativeSeed(seedDir) {
+  const sourceIndexPath = path.join(seedDir, 'index.json');
+  if (!(await fileExists(sourceIndexPath))) {
+    throw new Error(`Native seed is missing index.json: ${sourceIndexPath}`);
+  }
+  const sourceProjectsDir = path.join(seedDir, 'projects');
+  await clearDataStore();
+  if (await fileExists(sourceProjectsDir)) {
+    await fs.cp(sourceProjectsDir, PROJECTS_DIR, {
+      recursive: true,
+      force: true
+    });
+  }
+  const sourceIndex = await readJson(sourceIndexPath, { projects: [] });
+  const sanitizedIndex = { projects: sanitizeProjectList(sourceIndex?.projects) };
+  const finalProjects = [];
+
+  for (const entry of sanitizedIndex.projects) {
+    const meta = await loadProjectMeta(entry.id);
+    if (!meta) continue;
+    const boardRows = [];
+    const dir = boardsDir(entry.id);
+    if (await fileExists(dir)) {
+      const boardFiles = await fs.readdir(dir).catch(() => []);
+      for (const fileName of boardFiles) {
+        if (!fileName.endsWith('.json')) continue;
+        const boardId = fileName.slice(0, -5);
+        if (!isValidId(boardId)) continue;
+        const board = await loadBoard(entry.id, boardId);
+        if (!board) continue;
+        await saveBoardPayload(entry.id, boardId, board);
+        boardRows.push({
+          id: boardId,
+          name: String(board.name || 'Untitled'),
+          createdAt: Number(board.createdAt || nowTs()),
+          updatedAt: Number(board.updatedAt || nowTs())
+        });
+      }
+    }
+    const normalizedMeta = await saveProjectMeta(entry.id, {
+      ...meta,
+      boards: boardRows
+    });
+
+    const sourceAssets = await loadProjectAssets(entry.id);
+    const keptAssets = [];
+    for (const asset of sourceAssets.assets) {
+      const file = assetPath(entry.id, asset.fileName);
+      if (!(await fileExists(file))) continue;
+      keptAssets.push(asset);
+    }
+    await saveProjectAssets(entry.id, { assets: keptAssets });
+
+    finalProjects.push({
+      id: normalizedMeta.id,
+      name: normalizedMeta.name,
+      createdAt: normalizedMeta.createdAt,
+      updatedAt: normalizedMeta.updatedAt
+    });
+  }
+
+  await writeIndex({ projects: finalProjects });
+  const manifestPath = path.join(seedDir, 'seed.config.json');
+  const manifest = await readJson(manifestPath, {});
+  const hash = await hashFileSha1(sourceIndexPath);
+  return {
+    contentHash: hash,
+    manifest,
+    projectIds: finalProjects.map((project) => project.id)
+  };
+}
+
+async function materializePortableSeed(seedJsonPath) {
+  const payload = await readJson(seedJsonPath, null);
+  if (!payload || typeof payload !== 'object') {
+    throw new Error(`Invalid portable seed JSON: ${seedJsonPath}`);
+  }
+  const projectsPayload = Array.isArray(payload.projects) ? payload.projects : [];
+  const usedProjectIds = new Set();
+  const usedBoardIdsByProject = new Map();
+
+  await clearDataStore();
+  const indexProjects = [];
+  const projectIdMap = new Map();
+
+  for (const rawProject of projectsPayload) {
+    let projectId = String(rawProject?.id || '').trim();
+    if (!isValidId(projectId) || usedProjectIds.has(projectId)) {
+      projectId = nanoid(16);
+      while (usedProjectIds.has(projectId)) {
+        projectId = nanoid(16);
+      }
+    }
+    usedProjectIds.add(projectId);
+    projectIdMap.set(String(rawProject?.id || projectId), projectId);
+
+    const projectCreatedAt = Number(rawProject?.createdAt || nowTs());
+    const projectUpdatedAt = Number(rawProject?.updatedAt || projectCreatedAt);
+    const projectName = String(rawProject?.name || 'Untitled Project');
+
+    await fs.mkdir(boardsDir(projectId), { recursive: true });
+    await fs.mkdir(assetsDir(projectId), { recursive: true });
+
+    const boardSet = new Set();
+    usedBoardIdsByProject.set(projectId, boardSet);
+    const boardRows = [];
+    const boardsPayload = Array.isArray(rawProject?.boards) ? rawProject.boards : [];
+    for (const rawBoard of boardsPayload) {
+      let boardId = String(rawBoard?.id || '').trim();
+      if (!isValidId(boardId) || boardSet.has(boardId)) {
+        boardId = nanoid(16);
+        while (boardSet.has(boardId)) {
+          boardId = nanoid(16);
+        }
+      }
+      boardSet.add(boardId);
+      const payloadBoard = normalizeBoardPayload(boardId, {
+        ...rawBoard,
+        id: boardId,
+        name: rawBoard?.name || 'Untitled'
+      });
+      const saved = await saveBoardPayload(projectId, boardId, payloadBoard);
+      boardRows.push({
+        id: saved.id,
+        name: saved.name,
+        createdAt: saved.createdAt,
+        updatedAt: saved.updatedAt
+      });
+    }
+
+    const rawAssets = Array.isArray(rawProject?.assets) ? rawProject.assets : [];
+    const assetRows = [];
+    for (const rawAsset of rawAssets) {
+      const payloadBase64 = normalizeBase64Payload(rawAsset?.base64);
+      if (!isValidBase64Payload(payloadBase64)) continue;
+      let assetId = String(rawAsset?.id || '').trim();
+      if (!isValidId(assetId) || assetRows.some((entry) => entry.id === assetId)) {
+        assetId = nanoid(16);
+        while (assetRows.some((entry) => entry.id === assetId)) {
+          assetId = nanoid(16);
+        }
+      }
+      const mimeType = String(rawAsset?.type || rawAsset?.mimeType || 'application/octet-stream').toLowerCase();
+      const ext = resolveAssetExt(rawAsset?.name || rawAsset?.fileName, mimeType);
+      const fileName = assetFileName(assetId, rawAsset?.ext || ext);
+      const binary = Buffer.from(payloadBase64, 'base64');
+      const ts = Number(rawAsset?.createdAt || nowTs());
+      await fs.writeFile(assetPath(projectId, fileName), binary);
+      assetRows.push({
+        id: assetId,
+        name: sanitizeAssetName(rawAsset?.name || fileName),
+        type: mimeType || 'application/octet-stream',
+        category: rawAsset?.category ? String(rawAsset.category) : null,
+        ext: normalizeAssetExt(rawAsset?.ext || ext),
+        fileName,
+        size: binary.length,
+        createdAt: ts,
+        updatedAt: Number(rawAsset?.updatedAt || ts)
+      });
+    }
+
+    await saveProjectAssets(projectId, { assets: assetRows });
+    const savedMeta = await saveProjectMeta(projectId, {
+      id: projectId,
+      name: projectName,
+      createdAt: projectCreatedAt,
+      updatedAt: projectUpdatedAt,
+      boards: boardRows
+    });
+    indexProjects.push({
+      id: savedMeta.id,
+      name: savedMeta.name,
+      createdAt: savedMeta.createdAt,
+      updatedAt: savedMeta.updatedAt
+    });
+  }
+
+  await writeIndex({ projects: indexProjects });
+  const hash = await hashFileSha1(seedJsonPath);
+  const manifest = normalizeSeedManifest(payload);
+  const mappedReadOnlyIds = manifest.readOnlyProjectIds
+    .map((id) => projectIdMap.get(id) || id)
+    .filter((id) => isValidId(id));
+  return {
+    contentHash: hash,
+    manifest: { ...manifest, readOnlyProjectIds: mappedReadOnlyIds },
+    projectIds: indexProjects.map((project) => project.id)
+  };
+}
+
+async function applySeedBootstrap() {
+  const hasSource = Boolean(SEED_OPTIONS.seedDir || SEED_OPTIONS.seedJson);
+  if (!hasSource) {
+    applyReadOnlyConfig({}, []);
+    return { applied: false, reason: 'no-source' };
+  }
+  const sourceType = SEED_OPTIONS.seedDir ? 'native' : 'portable';
+  const sourcePath = sourceType === 'native' ? SEED_OPTIONS.seedDir : SEED_OPTIONS.seedJson;
+  const state = await readSeedState();
+  const hasProjects = await hasAnyProjects();
+  const previewManifest = sourceType === 'native'
+    ? normalizeSeedManifest(await readJson(path.join(sourcePath, 'seed.config.json'), {}))
+    : normalizeSeedManifest(await readJson(sourcePath, {}));
+
+  if (SEED_OPTIONS.policy === 'first-run' && hasProjects) {
+    applyReadOnlyConfig(previewManifest, []);
+    return { applied: false, reason: 'first-run-existing', sourceType, sourcePath };
+  }
+
+  if (
+    SEED_OPTIONS.policy === 'versioned'
+    && hasProjects
+    && state?.seedVersion
+    && SEED_OPTIONS.version
+    && state.seedVersion === SEED_OPTIONS.version
+  ) {
+    applyReadOnlyConfig(previewManifest, []);
+    return { applied: false, reason: 'version-match', sourceType, sourcePath };
+  }
+
+  const result = sourceType === 'native'
+    ? await copyNativeSeed(sourcePath)
+    : await materializePortableSeed(sourcePath);
+
+  const manifest = normalizeSeedManifest(result.manifest || {});
+  const seedVersion = SEED_OPTIONS.version || manifest.seedVersion || '';
+  const readOnlyManifest = {
+    ...manifest,
+    readOnlyMode: manifest.readOnlyMode,
+    readOnlyProjectIds: manifest.readOnlyProjectIds || []
+  };
+  applyReadOnlyConfig(readOnlyManifest, result.projectIds);
+  await writeSeedState({
+    sourceType,
+    sourcePath,
+    appliedAt: nowTs(),
+    seedVersion,
+    contentHash: result.contentHash || ''
+  });
+  return {
+    applied: true,
+    sourceType,
+    sourcePath,
+    seedVersion,
+    projectCount: result.projectIds.length
+  };
 }
 
 async function touchProjectIndex(projectId, patch = {}) {
@@ -1021,6 +1411,10 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/projects') {
+    if (READ_ONLY_CONFIG.mode === 'all') {
+      sendReadOnlyError(res);
+      return;
+    }
     try {
       const body = await readJsonBody(req);
       const project = await createProject(body?.name);
@@ -1046,6 +1440,10 @@ async function handleApi(req, res, url) {
     if (!validateIds(res, projectId, boardId)) return;
 
     if (req.method === 'POST') {
+      if (isReadOnlyProject(projectId)) {
+        sendReadOnlyError(res, projectId, boardId);
+        return;
+      }
       try {
         const body = await readJsonBody(req);
         const nodes = Array.isArray(body?.nodes) ? body.nodes : [];
@@ -1081,6 +1479,10 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === 'PATCH') {
+      if (isReadOnlyProject(projectId)) {
+        sendReadOnlyError(res, projectId, boardId);
+        return;
+      }
       try {
         const body = await readJsonBody(req);
         const board = await renameBoard(projectId, boardId, body?.name);
@@ -1097,6 +1499,10 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === 'PUT') {
+      if (isReadOnlyProject(projectId)) {
+        sendReadOnlyError(res, projectId, boardId);
+        return;
+      }
       try {
         const body = await readJsonBody(req);
         const payload = body?.board || body;
@@ -1114,6 +1520,10 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === 'DELETE') {
+      if (isReadOnlyProject(projectId)) {
+        sendReadOnlyError(res, projectId, boardId);
+        return;
+      }
       try {
         const removed = await deleteBoard(projectId, boardId);
         if (!removed) {
@@ -1145,6 +1555,10 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === 'POST') {
+      if (isReadOnlyProject(projectId)) {
+        sendReadOnlyError(res, projectId);
+        return;
+      }
       try {
         const body = await readJsonBody(req);
         const payload = parseInitialBoardPayload(body);
@@ -1175,6 +1589,10 @@ async function handleApi(req, res, url) {
     if (!validateIds(res, projectId)) return;
 
     if (req.method === 'POST') {
+      if (isReadOnlyProject(projectId)) {
+        sendReadOnlyError(res, projectId);
+        return;
+      }
       try {
         const body = await readJsonBody(req);
         const payload = normalizeBase64Payload(body?.base64);
@@ -1250,6 +1668,10 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === 'DELETE') {
+      if (isReadOnlyProject(projectId)) {
+        sendReadOnlyError(res, projectId);
+        return;
+      }
       try {
         const removed = await deleteProjectAsset(projectId, assetId);
         if (!removed) {
@@ -1289,6 +1711,10 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === 'PATCH') {
+      if (isReadOnlyProject(projectId)) {
+        sendReadOnlyError(res, projectId);
+        return;
+      }
       try {
         const body = await readJsonBody(req);
         const project = await renameProject(projectId, body?.name);
@@ -1312,6 +1738,10 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === 'DELETE') {
+      if (isReadOnlyProject(projectId)) {
+        sendReadOnlyError(res, projectId);
+        return;
+      }
       try {
         const removed = await deleteProject(projectId);
         if (!removed) {
@@ -1396,7 +1826,10 @@ async function sendFile(res, filePath) {
   if (isAppIndexFile(filePath)) {
     await sendIndexHtmlWithRuntimeConfig(res, filePath, {
       storageMode: 'server',
-      serverBase: ''
+      serverBase: '',
+      seedReadOnlyMode: READ_ONLY_CONFIG.mode,
+      seedReadOnlyProjectIds: Array.from(READ_ONLY_CONFIG.projectIds),
+      readOnlyFork: READ_ONLY_CONFIG.fork
     });
     return;
   }
@@ -1408,6 +1841,7 @@ async function sendFile(res, filePath) {
 
 async function start() {
   await ensureStore();
+  const seedResult = await applySeedBootstrap();
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname.startsWith('/api/')) {
@@ -1419,6 +1853,19 @@ async function start() {
   server.listen(PORT, HOST, () => {
     console.log(`Elenweave server running at http://${HOST}:${PORT}`);
     console.log(`Data root: ${DATA_ROOT}`);
+    if (seedResult?.applied) {
+      console.log(
+        `Seed applied (${seedResult.sourceType}) from ${seedResult.sourcePath}`
+        + ` [projects=${seedResult.projectCount}, version=${seedResult.seedVersion || 'n/a'}]`
+      );
+    } else if (seedResult?.reason && seedResult.reason !== 'no-source') {
+      console.log(`Seed skipped: ${seedResult.reason}`);
+    }
+    console.log(
+      `Seed read-only mode: ${READ_ONLY_CONFIG.mode}`
+      + (READ_ONLY_CONFIG.mode === 'projects' ? ` (${Array.from(READ_ONLY_CONFIG.projectIds).join(',') || 'none'})` : '')
+      + `; fork=${READ_ONLY_CONFIG.fork}`
+    );
   });
 }
 

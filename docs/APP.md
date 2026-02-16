@@ -85,7 +85,7 @@ Server-side disk layout is documented in `docs/SERVER.md`.
 
 ## Runtime flow
 
-1. App boots with `window.__ELENWEAVE_RUNTIME__` (`storageMode: "client" | "server"`).
+1. App boots with `window.__ELENWEAVE_RUNTIME__` (`storageMode: "client" | "server"` plus optional seed read-only flags).
 2. In server mode, it loads projects, selects/creates active project, then loads boards for that project.
 3. Loads active board payload into the view.
 4. User actions mutate graph state; persistence is scheduled.
@@ -101,3 +101,4 @@ Server-side disk layout is documented in `docs/SERVER.md`.
 - The app layer does not modify the core Elenweave library.
 - Server mode does not fallback to IndexedDB for workspace/boards/assets.
 - Client mode does not call server APIs.
+- In seeded read-only hosting mode, edit attempts can switch to local fork mode (IndexedDB) while hosted data remains read-only.

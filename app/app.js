@@ -107,21 +107,52 @@ const REALTIME_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025';
 const ACTIVE_BOARD_KEY_LEGACY = 'elenweave_active_board';
 const ACTIVE_BOARD_KEY_PREFIX = 'elenweave_active_board::';
 const ACTIVE_PROJECT_KEY = 'elenweave_active_project';
+const LOCAL_FORK_ACTIVE_KEY = 'elenweave_local_fork_active';
 const RUNTIME_CONFIG = (() => {
   try {
     const raw = window.__ELENWEAVE_RUNTIME__;
-    if (!raw || typeof raw !== 'object') return { storageMode: 'client', serverBase: '' };
+    if (!raw || typeof raw !== 'object') {
+      return {
+        storageMode: 'client',
+        serverBase: '',
+        seedReadOnlyMode: 'off',
+        seedReadOnlyProjectIds: [],
+        readOnlyFork: 'local'
+      };
+    }
     const storageMode = raw.storageMode === 'server' ? 'server' : 'client';
     const serverBase = storageMode === 'server'
       ? String(raw.serverBase || '').replace(/\/+$/, '')
       : '';
-    return { storageMode, serverBase };
+    const seedReadOnlyMode = raw.seedReadOnlyMode === 'all' || raw.seedReadOnlyMode === 'projects'
+      ? raw.seedReadOnlyMode
+      : 'off';
+    const seedReadOnlyProjectIds = Array.isArray(raw.seedReadOnlyProjectIds)
+      ? raw.seedReadOnlyProjectIds.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+    const readOnlyFork = raw.readOnlyFork === 'off' ? 'off' : 'local';
+    return {
+      storageMode,
+      serverBase,
+      seedReadOnlyMode,
+      seedReadOnlyProjectIds,
+      readOnlyFork
+    };
   } catch (err) {
-    return { storageMode: 'client', serverBase: '' };
+    return {
+      storageMode: 'client',
+      serverBase: '',
+      seedReadOnlyMode: 'off',
+      seedReadOnlyProjectIds: [],
+      readOnlyFork: 'local'
+    };
   }
 })();
 const SERVER_BASE = RUNTIME_CONFIG.serverBase;
 const IS_SERVER_MODE = RUNTIME_CONFIG.storageMode === 'server';
+const SEED_READ_ONLY_MODE = RUNTIME_CONFIG.seedReadOnlyMode || 'off';
+const SEED_READ_ONLY_PROJECTS = new Set(RUNTIME_CONFIG.seedReadOnlyProjectIds || []);
+const READ_ONLY_FORK_MODE = RUNTIME_CONFIG.readOnlyFork || 'local';
 
 const workspace = new ElenweaveWorkspace();
 const view = new ElenweaveView({
@@ -201,12 +232,56 @@ function saveActiveProjectId(projectId) {
   }
 }
 
+function loadLocalForkMode() {
+  try {
+    return localStorage.getItem(LOCAL_FORK_ACTIVE_KEY) === 'true';
+  } catch (err) {
+    return false;
+  }
+}
+
+function saveLocalForkMode(value) {
+  try {
+    if (!value) {
+      localStorage.removeItem(LOCAL_FORK_ACTIVE_KEY);
+      return;
+    }
+    localStorage.setItem(LOCAL_FORK_ACTIVE_KEY, 'true');
+  } catch (err) {
+    return;
+  }
+}
+
+function isRuntimeReadOnlyProject(projectId) {
+  if (SEED_READ_ONLY_MODE === 'all') return true;
+  if (SEED_READ_ONLY_MODE !== 'projects') return false;
+  if (!projectId) return false;
+  return SEED_READ_ONLY_PROJECTS.has(projectId);
+}
+
+function shouldForkLocally(projectId) {
+  if (!IS_SERVER_MODE) return false;
+  if (READ_ONLY_FORK_MODE !== 'local') return false;
+  return isRuntimeReadOnlyProject(projectId || activeProjectId);
+}
+
+let forceClientMode = IS_SERVER_MODE && READ_ONLY_FORK_MODE === 'local' && loadLocalForkMode();
+let localForkNoticeShown = false;
+
 async function ensureServerMode() {
-  return IS_SERVER_MODE;
+  if (!IS_SERVER_MODE || forceClientMode) return false;
+  if (shouldForkLocally(activeProjectId)) {
+    await activateLocalForkMode({
+      projectId: activeProjectId,
+      reason: 'Read-only hosted data.'
+    });
+    return false;
+  }
+  return true;
 }
 
 async function apiFetch(path, options = {}) {
-  if (!IS_SERVER_MODE) throw new Error('Server API is disabled in client storage mode.');
+  if (!IS_SERVER_MODE || forceClientMode) throw new Error('Server API is disabled in client storage mode.');
   const headers = { ...(options.headers || {}) };
   let body = options.body;
   if (body && typeof body === 'object' && !(body instanceof FormData)) {
@@ -219,8 +294,36 @@ async function apiFetch(path, options = {}) {
     body
   });
   if (!response.ok) {
-    const message = await response.text().catch(() => '');
-    throw new Error(message || `Request failed (${response.status}).`);
+    const rawText = await response.text().catch(() => '');
+    let payload = null;
+    try {
+      payload = rawText ? JSON.parse(rawText) : null;
+    } catch (err) {
+      payload = null;
+    }
+    const error = new Error(
+      (payload && typeof payload.message === 'string' && payload.message)
+      || rawText
+      || `Request failed (${response.status}).`
+    );
+    error.status = response.status;
+    error.code = payload?.error || '';
+    error.payload = payload;
+    if (error.status === 403 && error.code === 'ReadOnlySeed') {
+      const targetProjectId = payload?.projectId || activeProjectId || '';
+      if (READ_ONLY_FORK_MODE === 'local') {
+        try {
+          const switched = await activateLocalForkMode({
+            projectId: targetProjectId,
+            reason: payload?.message || 'Read-only seed.'
+          });
+          error.forkedToLocal = Boolean(switched);
+        } catch (forkErr) {
+          console.warn('Local fork activation failed', forkErr);
+        }
+      }
+    }
+    throw error;
   }
   if (response.status === 204) return null;
   return response.json().catch(() => null);
@@ -1169,6 +1272,8 @@ async function attachAssetToNode(nodeId, file, node, config) {
   if (config?.assetType === 'audio' || config?.assetType === 'video' || config?.assetType === 'image') {
     nextProps.title = asset.name;
   }
+  delete nextData.remoteSrc;
+  delete nextData.remoteProjectId;
   view.updateNode(nodeId, { data: nextData, props: nextProps });
   if (currentForm?.inputs?.file) currentForm.inputs.file.value = '';
   if (currentForm?.fileChips?.file) {
@@ -2622,6 +2727,129 @@ function generateBoardId() {
   return id;
 }
 
+function cloneBoardForLocalFork(payload, sourceProjectId, localBoardId) {
+  const clone = JSON.parse(JSON.stringify(payload || {}));
+  clone.id = localBoardId;
+  clone.name = clone.name || 'Untitled';
+  if (!Array.isArray(clone.nodes)) clone.nodes = [];
+  clone.nodes = clone.nodes.map((node) => {
+    if (!node || typeof node !== 'object') return node;
+    if (!node.data || typeof node.data !== 'object' || !node.data.assetId) return node;
+    const remoteSrc = buildServerAssetUrl(sourceProjectId, node.data.assetId, node.data.src || '');
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        remoteSrc,
+        remoteProjectId: sourceProjectId,
+        src: remoteSrc
+      }
+    };
+  });
+  return clone;
+}
+
+async function fetchServerJson(path) {
+  const response = await fetch(`${SERVER_BASE}${path}`, { method: 'GET' });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(text || `Request failed (${response.status}).`);
+  }
+  return response.json().catch(() => null);
+}
+
+function setLocalForkMode(value) {
+  forceClientMode = Boolean(value);
+  saveLocalForkMode(forceClientMode);
+}
+
+async function activateLocalForkMode(options = {}) {
+  if (!IS_SERVER_MODE || READ_ONLY_FORK_MODE !== 'local') return false;
+  if (forceClientMode) {
+    if (!localForkNoticeShown) {
+      setStatus('Read-only hosted data. Editing local fork.', 0);
+      localForkNoticeShown = true;
+    }
+    return true;
+  }
+
+  const sourceProjectId = String(options.projectId || activeProjectId || '').trim();
+  let sourceProjectName = 'Hosted Project';
+  let sourceBoards = [];
+  let sourceActiveBoardId = activeBoardId;
+
+  if (sourceProjectId) {
+    try {
+      const projectPayload = await fetchServerJson(`/api/projects/${encodeURIComponent(sourceProjectId)}`);
+      const project = projectPayload?.project || null;
+      if (project?.name) sourceProjectName = String(project.name);
+    } catch (err) {
+      sourceProjectName = 'Hosted Project';
+    }
+    try {
+      const boardsPayload = await fetchServerJson(`/api/projects/${encodeURIComponent(sourceProjectId)}/boards`);
+      const boardRows = Array.isArray(boardsPayload?.boards) ? boardsPayload.boards : [];
+      for (const entry of boardRows) {
+        const boardId = String(entry?.id || '').trim();
+        if (!boardId) continue;
+        const payload = await fetchServerJson(`/api/projects/${encodeURIComponent(sourceProjectId)}/boards/${encodeURIComponent(boardId)}`);
+        if (!payload?.board?.id) continue;
+        sourceBoards.push(payload.board);
+      }
+    } catch (err) {
+      console.warn('Local fork bootstrap: board fetch failed', err);
+    }
+  }
+
+  setLocalForkMode(true);
+
+  const forkProjectId = generateProjectId();
+  const forkProjectName = `${sourceProjectName} (Local Fork)`;
+  ensureProjectIndexEntry(forkProjectId, forkProjectName);
+  updateProjectIndexEntry(forkProjectId, { name: forkProjectName, updatedAt: Date.now() });
+  activeProjectId = forkProjectId;
+
+  let nextActiveBoardId = null;
+  for (const sourceBoard of sourceBoards) {
+    const localBoardId = generateBoardId();
+    const localPayload = cloneBoardForLocalFork(sourceBoard, sourceProjectId, localBoardId);
+    boardIndex.push({
+      id: localBoardId,
+      projectId: forkProjectId,
+      name: String(localPayload.name || sourceBoard?.name || 'Untitled'),
+      updatedAt: Number(localPayload.updatedAt || Date.now())
+    });
+    await saveGraphPayload(localBoardId, scrubExportPayload(localPayload));
+    if (!nextActiveBoardId || sourceBoard.id === sourceActiveBoardId) {
+      nextActiveBoardId = localBoardId;
+    }
+  }
+
+  if (!nextActiveBoardId) {
+    const created = await createLocalBoard('Board 01', {
+      activate: false,
+      queueEdit: false
+    });
+    nextActiveBoardId = created?.id || null;
+  }
+
+  await saveWorkspaceIndex();
+  refreshProjectList();
+  refreshBoardList();
+  if (nextActiveBoardId) {
+    await activateBoard(nextActiveBoardId, { skipSave: true, projectId: forkProjectId });
+  }
+  const reasonText = String(options.reason || '').trim();
+  setStatus(
+    reasonText
+      ? `Read-only hosted data (${reasonText}). Editing local fork.`
+      : 'Read-only hosted data. Editing local fork.',
+    0
+  );
+  localForkNoticeShown = true;
+  return true;
+}
+
 function createEmptyGraphPayload(id, name) {
   return {
     id,
@@ -2684,11 +2912,14 @@ async function createProject(name) {
       ensureProjectIndexEntry(project.id, project.name || name || 'Untitled Project');
       await activateProject(project.id, { skipSave: true, createBoardIfEmpty: true });
       setStatus('Project created.');
+      return;
     } catch (err) {
       console.warn('Project create failed', err);
-      setStatus('Project create failed.');
+      if (!err?.forkedToLocal) {
+        setStatus('Project create failed.');
+        return;
+      }
     }
-    return;
   }
   const id = generateProjectId();
   const entry = {
@@ -2729,8 +2960,10 @@ async function renameProject(projectId, name) {
       return true;
     } catch (err) {
       console.warn('Project rename failed', err);
-      setStatus('Project rename failed.', 1800);
-      return false;
+      if (!err?.forkedToLocal) {
+        setStatus('Project rename failed.', 1800);
+        return false;
+      }
     }
   }
 
@@ -2917,8 +3150,10 @@ async function activateProject(projectId, options = {}) {
       return;
     }
 
-    let nextBoardId = loadActiveBoardIdForProject(projectId);
-    const boards = getBoardsForProject(projectId);
+    const localProjectId = forceClientMode && activeProjectId ? activeProjectId : projectId;
+    activeProjectId = localProjectId;
+    let nextBoardId = loadActiveBoardIdForProject(localProjectId);
+    const boards = getBoardsForProject(localProjectId);
     if (!boards.some((entry) => entry.id === nextBoardId)) {
       nextBoardId = boards[0]?.id || null;
     }
@@ -2937,7 +3172,7 @@ async function activateProject(projectId, options = {}) {
     refreshProjectList();
     refreshBoardList();
     if (nextBoardId) {
-      await activateBoard(nextBoardId, { skipSave: true, projectId });
+      await activateBoard(nextBoardId, { skipSave: true, projectId: localProjectId });
     }
     validateBoardIndexInvariants();
   } catch (err) {
@@ -3007,11 +3242,14 @@ async function createBoard(name) {
       await activateBoard(board.id, { projectId: activeProjectId });
       setStatus('Board created.');
       queueBoardEdit(board.id);
+      return;
     } catch (err) {
       console.warn('Board create failed', err);
-      setStatus('Board create failed.');
+      if (!err?.forkedToLocal) {
+        setStatus('Board create failed.');
+        return;
+      }
     }
-    return;
   }
   await createLocalBoard(name || 'Untitled', {
     activate: true,
@@ -3139,6 +3377,11 @@ function commitBoardEdit(value) {
       })
       .catch((err) => {
         console.warn('Board rename save failed', err);
+        if (err?.forkedToLocal) {
+          saveWorkspaceIndex().catch((saveErr) => {
+            console.warn('Board rename local save failed', saveErr);
+          });
+        }
       });
     setStatus('Board renamed.');
   }
@@ -3175,7 +3418,7 @@ function scrubExportPayload(payload) {
   const clone = JSON.parse(JSON.stringify(payload));
   if (!Array.isArray(clone.nodes)) return clone;
   clone.nodes.forEach((node) => {
-    if (node.data && node.data.assetId) {
+    if (node.data && node.data.assetId && !node.data.remoteSrc) {
       delete node.data.src;
     }
   });
@@ -5178,12 +5421,16 @@ function graphPayloadKey(projectId, graphId) {
 async function saveGraphPayload(graphId, payload) {
   if (!graphId || !payload) return;
   if (await ensureServerMode()) {
-    if (!activeProjectId) throw new Error('No active project.');
-    await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards/${encodeURIComponent(graphId)}`, {
-      method: 'PUT',
-      body: { board: payload }
-    });
-    return;
+    try {
+      if (!activeProjectId) throw new Error('No active project.');
+      await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards/${encodeURIComponent(graphId)}`, {
+        method: 'PUT',
+        body: { board: payload }
+      });
+      return;
+    } catch (err) {
+      if (!err?.forkedToLocal) throw err;
+    }
   }
   const db = await openDb();
   return new Promise((resolve, reject) => {
@@ -5227,9 +5474,9 @@ async function deleteGraphPayload(graphId) {
       if (!activeProjectId) return;
       await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards/${encodeURIComponent(graphId)}`, { method: 'DELETE' });
     } catch (err) {
-      return;
+      if (!err?.forkedToLocal) return;
     }
-    return;
+    if (!forceClientMode) return;
   }
   const db = await openDb();
   return new Promise((resolve, reject) => {
@@ -5264,26 +5511,30 @@ function fileToBase64(file) {
 
 async function saveAsset(file, category) {
   if (await ensureServerMode()) {
-    if (!activeProjectId) throw new Error('No active project.');
-    const response = await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/assets`, {
-      method: 'POST',
-      body: {
-        filename: file.name || `${category}-${Date.now()}`,
-        mimeType: file.type || 'application/octet-stream',
-        category: category || null,
-        base64: await fileToBase64(file)
-      }
-    });
-    const asset = response?.asset;
-    if (!asset?.id) throw new Error('Asset save failed.');
-    return {
-      id: asset.id,
-      name: asset.name || file.name || `${category}-${Date.now()}`,
-      type: asset.type || file.type || 'application/octet-stream',
-      category: asset.category || category || null,
-      createdAt: Number(asset.createdAt || Date.now()),
-      url: buildServerAssetUrl(activeProjectId, asset.id, asset.url || '')
-    };
+    try {
+      if (!activeProjectId) throw new Error('No active project.');
+      const response = await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/assets`, {
+        method: 'POST',
+        body: {
+          filename: file.name || `${category}-${Date.now()}`,
+          mimeType: file.type || 'application/octet-stream',
+          category: category || null,
+          base64: await fileToBase64(file)
+        }
+      });
+      const asset = response?.asset;
+      if (!asset?.id) throw new Error('Asset save failed.');
+      return {
+        id: asset.id,
+        name: asset.name || file.name || `${category}-${Date.now()}`,
+        type: asset.type || file.type || 'application/octet-stream',
+        category: asset.category || category || null,
+        createdAt: Number(asset.createdAt || Date.now()),
+        url: buildServerAssetUrl(activeProjectId, asset.id, asset.url || '')
+      };
+    } catch (err) {
+      if (!err?.forkedToLocal) throw err;
+    }
   }
   const asset = {
     id: crypto.randomUUID(),
@@ -5499,6 +5750,11 @@ async function initApp() {
   await hydrateMediaNodes();
   collapseNotificationPanel();
   window.requestAnimationFrame(() => fitContentToView());
+  if (forceClientMode && READ_ONLY_FORK_MODE === 'local') {
+    setStatus('Read-only hosted data. Editing local fork.', 0);
+    localForkNoticeShown = true;
+    return;
+  }
   setStatus('Demo workspace ready.');
 }
 
@@ -5546,18 +5802,25 @@ async function restoreServerWorkspace() {
       boardId = boardIndex[0]?.id || null;
     }
     if (!boardId) {
-      const createdBoard = await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards`, {
-        method: 'POST',
-        body: { name: 'Board 01' }
-      });
-      if (!createdBoard?.board?.id) return false;
-      boardIndex.push({
-        id: createdBoard.board.id,
-        projectId: activeProjectId,
-        name: createdBoard.board.name || 'Board 01',
-        updatedAt: createdBoard.board.updatedAt || Date.now()
-      });
-      boardId = createdBoard.board.id;
+      try {
+        const createdBoard = await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards`, {
+          method: 'POST',
+          body: { name: 'Board 01' }
+        });
+        if (!createdBoard?.board?.id) return false;
+        boardIndex.push({
+          id: createdBoard.board.id,
+          projectId: activeProjectId,
+          name: createdBoard.board.name || 'Board 01',
+          updatedAt: createdBoard.board.updatedAt || Date.now()
+        });
+        boardId = createdBoard.board.id;
+      } catch (err) {
+        if (err?.forkedToLocal) {
+          return restoreWorkspace();
+        }
+        throw err;
+      }
     }
     validateBoardIndexInvariants();
     activeBoardId = boardId;
