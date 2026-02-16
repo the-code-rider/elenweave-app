@@ -1,4 +1,6 @@
 {
   "openaiApiKey": "sk-...",
-  "geminiApiKey": "AIza..."
+  "geminiApiKey": "AIza...",
+  "openaiModel": "gpt-5-mini",
+  "geminiModel": "gemini-3-flash-preview"
 }

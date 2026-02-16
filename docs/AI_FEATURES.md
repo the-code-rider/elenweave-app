@@ -6,6 +6,7 @@ This document summarizes the AI-specific features implemented in the app layer (
 - Default models:
   - OpenAI: `gpt-5-mini`
   - Gemini: `gemini-3-flash-preview`
+- In local server mode, `config.json` can provide provider-specific defaults (`openaiModel`, `geminiModel`) used automatically for AI requests unless the browser has a local override.
 - Model Config panel supports per-provider API keys + model overrides.
 - In local server mode, AI calls can use server-side keys from env/config via `/api/ai/*` proxy routes.
 

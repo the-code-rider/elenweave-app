@@ -76,10 +76,22 @@ Accepted params:
 | `openaiApiKey` | `string` | OpenAI key |
 | `geminiApiKey` | `string` | Gemini key |
 | `googleApiKey` | `string` | Gemini-compatible Google key |
+| `openaiModel` | `string` | Default OpenAI model used for AI requests |
+| `geminiModel` | `string` | Default Gemini model used for AI requests |
 | `openai.apiKey` | `string` | OpenAI key (nested form) |
 | `gemini.apiKey` | `string` | Gemini key (nested form) |
+| `openai.model` | `string` | Default OpenAI model (nested form) |
+| `gemini.model` | `string` | Default Gemini model (nested form) |
+| `openaiDefaultModel` | `string` | OpenAI default model (top-level alias) |
+| `geminiDefaultModel` | `string` | Gemini default model (top-level alias) |
+| `openai.defaultModel` | `string` | OpenAI default model (nested alias) |
+| `gemini.defaultModel` | `string` | Gemini default model (nested alias) |
 | `providers.openai.apiKey` | `string` | OpenAI key (provider map form) |
 | `providers.gemini.apiKey` | `string` | Gemini key (provider map form) |
+| `providers.openai.model` | `string` | Default OpenAI model (provider map form) |
+| `providers.gemini.model` | `string` | Default Gemini model (provider map form) |
+| `providers.openai.defaultModel` | `string` | OpenAI default model (provider alias) |
+| `providers.gemini.defaultModel` | `string` | Gemini default model (provider alias) |
 
 ## Environment Variables
 
@@ -102,11 +114,20 @@ Accepted params:
 | `ELENWEAVE_GEMINI_API_KEY` | _(unset)_ | Preferred Gemini key env var |
 | `GEMINI_API_KEY` | _(unset)_ | Gemini key env var |
 | `GOOGLE_API_KEY` | _(unset)_ | Gemini-compatible Google key env var |
+| `ELENWEAVE_OPENAI_MODEL` | _(unset)_ | Default OpenAI model for server-side AI proxy |
+| `ELENWEAVE_GEMINI_MODEL` | _(unset)_ | Default Gemini model for server-side AI proxy |
+| `ELENWEAVE_OPENAI_DEFAULT_MODEL` | _(unset)_ | Alias for OpenAI default model env var |
+| `ELENWEAVE_GEMINI_DEFAULT_MODEL` | _(unset)_ | Alias for Gemini default model env var |
 
 AI key precedence:
 
 - OpenAI: `ELENWEAVE_OPENAI_API_KEY` -> `OPENAI_API_KEY` -> config file values
 - Gemini: `ELENWEAVE_GEMINI_API_KEY` -> `GEMINI_API_KEY` -> `GOOGLE_API_KEY` -> config file values
+
+AI model precedence:
+
+- OpenAI: `ELENWEAVE_OPENAI_MODEL` -> `ELENWEAVE_OPENAI_DEFAULT_MODEL` -> config file values -> app fallback
+- Gemini: `ELENWEAVE_GEMINI_MODEL` -> `ELENWEAVE_GEMINI_DEFAULT_MODEL` -> config file values -> app fallback
 
 ## Project Structure
 

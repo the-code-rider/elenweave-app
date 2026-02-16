@@ -183,6 +183,35 @@ async function resolveAiProviderKey(provider) {
   return '';
 }
 
+async function resolveAiProviderDefaultModel(provider) {
+  const config = await loadAiConfig();
+  if (provider === 'openai') {
+    return firstNonEmptyString(
+      process.env.ELENWEAVE_OPENAI_MODEL,
+      process.env.ELENWEAVE_OPENAI_DEFAULT_MODEL,
+      config.openaiModel,
+      config.openaiDefaultModel,
+      config.openai?.model,
+      config.openai?.defaultModel,
+      config.providers?.openai?.model,
+      config.providers?.openai?.defaultModel
+    );
+  }
+  if (provider === 'gemini') {
+    return firstNonEmptyString(
+      process.env.ELENWEAVE_GEMINI_MODEL,
+      process.env.ELENWEAVE_GEMINI_DEFAULT_MODEL,
+      config.geminiModel,
+      config.geminiDefaultModel,
+      config.gemini?.model,
+      config.gemini?.defaultModel,
+      config.providers?.gemini?.model,
+      config.providers?.gemini?.defaultModel
+    );
+  }
+  return '';
+}
+
 async function listAvailableAiProviders() {
   const providers = [];
   if (await resolveAiProviderKey('openai')) providers.push('openai');
@@ -1262,6 +1291,11 @@ function readRawBody(req) {
   });
 }
 
+function parseJsonBuffer(buffer) {
+  const raw = Buffer.isBuffer(buffer) ? buffer.toString('utf8') : String(buffer || '');
+  return JSON.parse(raw.replace(/^\uFEFF/, ''));
+}
+
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     let total = 0;
@@ -1323,7 +1357,14 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/ai/providers') {
     const providers = await listAvailableAiProviders();
-    sendJson(res, 200, { providers });
+    const defaultModels = {};
+    for (const provider of providers) {
+      const model = await resolveAiProviderDefaultModel(provider);
+      if (model) {
+        defaultModels[provider] = model;
+      }
+    }
+    sendJson(res, 200, { providers, defaultModels });
     return;
   }
 
@@ -1335,13 +1376,35 @@ async function handleApi(req, res, url) {
         return;
       }
       const rawBody = await readRawBody(req);
+      const contentType = String(req.headers['content-type'] || '').toLowerCase();
+      let upstreamBody = rawBody.length ? rawBody : undefined;
+      let upstreamContentType = req.headers['content-type'] || 'application/json';
+      if (contentType.includes('application/json')) {
+        let payload = {};
+        try {
+          payload = rawBody.length ? parseJsonBuffer(rawBody) : {};
+        } catch (err) {
+          sendJson(res, 400, { error: 'InvalidRequest', message: 'Invalid JSON body for OpenAI request.' });
+          return;
+        }
+        const requestedModel = String(payload?.model || '').trim();
+        const fallbackModel = await resolveAiProviderDefaultModel('openai');
+        const model = requestedModel || fallbackModel;
+        if (!model) {
+          sendJson(res, 400, { error: 'InvalidRequest', message: 'Missing model for OpenAI request.' });
+          return;
+        }
+        payload.model = model;
+        upstreamBody = Buffer.from(JSON.stringify(payload));
+        upstreamContentType = 'application/json';
+      }
       const upstream = await fetch('https://api.openai.com/v1/responses', {
         method: 'POST',
         headers: {
-          'Content-Type': req.headers['content-type'] || 'application/json',
+          'Content-Type': upstreamContentType,
           'Authorization': `Bearer ${apiKey}`
         },
-        body: rawBody.length ? rawBody : undefined
+        body: upstreamBody
       });
       await sendUpstreamResponse(res, upstream);
     } catch (err) {
@@ -1381,7 +1444,9 @@ async function handleApi(req, res, url) {
         return;
       }
       const body = await readJsonBody(req);
-      const model = String(body?.model || '').trim();
+      const requestedModel = String(body?.model || '').trim();
+      const fallbackModel = await resolveAiProviderDefaultModel('gemini');
+      const model = requestedModel || fallbackModel;
       if (!model) {
         sendJson(res, 400, { error: 'InvalidRequest', message: 'Missing model for Gemini request.' });
         return;

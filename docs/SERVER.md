@@ -46,7 +46,19 @@ AI key config file options:
 - `./config.json` (repo root, auto-detected)
 - `./server/config.json` (auto-detected)
 
-See `server/config.example.json` for supported keys.
+Supported `config.json` keys:
+
+- OpenAI key: `openaiApiKey` or `openai.apiKey` or `providers.openai.apiKey`
+- Gemini key: `geminiApiKey` / `googleApiKey` or `gemini.apiKey` or `providers.gemini.apiKey`
+- OpenAI default model: `openaiModel` or `openai.model` or `providers.openai.model`
+- Gemini default model: `geminiModel` or `gemini.model` or `providers.gemini.model`
+- OpenAI default-model aliases: `openaiDefaultModel`, `openai.defaultModel`, `providers.openai.defaultModel`
+- Gemini default-model aliases: `geminiDefaultModel`, `gemini.defaultModel`, `providers.gemini.defaultModel`
+
+Model env overrides:
+
+- `ELENWEAVE_OPENAI_MODEL` (alias: `ELENWEAVE_OPENAI_DEFAULT_MODEL`)
+- `ELENWEAVE_GEMINI_MODEL` (alias: `ELENWEAVE_GEMINI_DEFAULT_MODEL`)
 
 ## Storage location
 
@@ -150,6 +162,18 @@ Native seed folders may include optional `seed.config.json` with read-only defau
 - `POST /api/ai/openai/responses`
 - `POST /api/ai/openai/transcriptions`
 - `POST /api/ai/gemini/generateContent`
+
+`GET /api/ai/providers` returns provider availability and server-default model hints:
+
+```json
+{
+  "providers": ["openai", "gemini"],
+  "defaultModels": {
+    "openai": "gpt-5-mini",
+    "gemini": "gemini-3-flash-preview"
+  }
+}
+```
 
 ## Notes
 

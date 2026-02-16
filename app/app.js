@@ -342,6 +342,7 @@ function resolveAiProxyBaseUrl(provider) {
 
 async function refreshServerAiProviders() {
   serverAiProviders = new Set();
+  serverAiDefaultModels = new Map();
   if (!IS_SERVER_MODE) return;
   try {
     const payload = await apiFetch('/api/ai/providers');
@@ -351,8 +352,19 @@ async function refreshServerAiProviders() {
         serverAiProviders.add(provider);
       }
     });
+    const defaultModels = payload?.defaultModels && typeof payload.defaultModels === 'object'
+      ? payload.defaultModels
+      : {};
+    Object.entries(defaultModels).forEach(([provider, value]) => {
+      if (provider !== 'openai' && provider !== 'gemini') return;
+      const model = String(value || '').trim();
+      if (model) {
+        serverAiDefaultModels.set(provider, model);
+      }
+    });
   } catch (err) {
     serverAiProviders = new Set();
+    serverAiDefaultModels = new Map();
   }
 }
 
@@ -375,6 +387,7 @@ let aiRequestPending = false;
 let navFocusArmed = false;
 let navFocusTimer = null;
 let serverAiProviders = new Set();
+let serverAiDefaultModels = new Map();
 let nodeContextMenu = {
   el: null,
   nodeId: null,
@@ -1061,7 +1074,7 @@ async function handleSend() {
     }
     let didSetPending = false;
     try {
-      const model = readModel(provider) || AI_DEFAULT_MODELS[provider] || AI_DEFAULT_MODELS.openai;
+      const model = resolveAiModel(provider);
       const attachments = collectAiAttachments(values);
       if (attachments.file && !attachments.kind) {
         setStatus('Upload an image, audio, or text/code file.', 1800);
@@ -2416,10 +2429,12 @@ function syncApiKeyInput() {
     }
   }
   if (els.modelNote) {
-    const fallback = AI_DEFAULT_MODELS[provider] || AI_DEFAULT_MODELS.openai;
+    const fallback = resolveAiModel(provider);
     els.modelNote.textContent = model
       ? `Saved locally for ${provider === 'openai' ? 'OpenAI' : 'Gemini'}.`
-      : `Using default: ${fallback}.`;
+      : serverAiDefaultModels.has(provider)
+        ? `Using server default: ${fallback}.`
+        : `Using default: ${fallback}.`;
   }
   saveProvider(provider);
 }
@@ -2475,6 +2490,14 @@ function readModel(provider) {
   } catch (err) {
     return '';
   }
+}
+
+function resolveAiModel(provider) {
+  const localModel = readModel(provider);
+  if (localModel) return localModel;
+  const serverModel = serverAiDefaultModels.get(provider);
+  if (serverModel) return serverModel;
+  return AI_DEFAULT_MODELS[provider] || AI_DEFAULT_MODELS.openai;
 }
 
 function loadProvider() {
@@ -3761,7 +3784,7 @@ async function handleAiFollowUp(node) {
   }
   let didSetPending = false;
   try {
-    const model = readModel(provider) || AI_DEFAULT_MODELS[provider] || AI_DEFAULT_MODELS.openai;
+    const model = resolveAiModel(provider);
     const message = resolveAiFollowUpMessage(node);
     const attachments = { file: null, kind: null };
     setAiRequestState(true);
@@ -3821,7 +3844,7 @@ async function handleRealtimeIntent(intent) {
   const apiKey = readApiKey(provider);
   const proxyBaseUrl = resolveAiProxyBaseUrl(provider);
   if (!apiKey && proxyBaseUrl == null) return { result: 'missing_api_key' };
-  const model = readModel(provider) || AI_DEFAULT_MODELS[provider] || AI_DEFAULT_MODELS.openai;
+  const model = resolveAiModel(provider);
   const attachments = { file: null, kind: null };
   const result = await requestAiPlan({
     provider,
