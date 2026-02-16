@@ -35,7 +35,9 @@ if (!ElenweaveWorkspace || !ElenweaveView) {
 
 const els = {
   projectSelect: document.getElementById('projectSelect'),
+  projectSelectWrap: document.querySelector('.project-select-wrap'),
   btnNewProject: document.getElementById('btnNewProject'),
+  btnRenameProject: document.getElementById('btnRenameProject'),
   boardList: document.getElementById('boardList'),
   // btnRename: document.getElementById('btnRename'),
   // btnPrev: document.getElementById('btnPrev'),
@@ -43,6 +45,8 @@ const els = {
   btnLink: document.getElementById('btnLink'),
   btnExport: document.getElementById('btnExport'),
   btnImport: document.getElementById('btnImport'),
+  toolsToggle: document.getElementById('toolsToggle'),
+  toolsBody: document.getElementById('toolsBody'),
   importFile: document.getElementById('importFile'),
   btnNew: document.getElementById('btnNew'),
   componentPicker: document.getElementById('componentPicker'),
@@ -100,7 +104,8 @@ const AI_ATTACHMENT_TEXT_LIMIT = 8000;
 const LARGE_TEXT_ASSET_BYTES = 200 * 1024;
 const TEXT_PREVIEW_BYTES = 12000;
 const REALTIME_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025';
-const ACTIVE_BOARD_KEY = 'elenweave_active_board';
+const ACTIVE_BOARD_KEY_LEGACY = 'elenweave_active_board';
+const ACTIVE_BOARD_KEY_PREFIX = 'elenweave_active_board::';
 const ACTIVE_PROJECT_KEY = 'elenweave_active_project';
 const RUNTIME_CONFIG = (() => {
   try {
@@ -135,13 +140,29 @@ patchNavigatorCenter();
 
 const canvasShell = document.querySelector('.canvas-shell');
 
-function loadActiveBoardId() {
+function activeBoardKeyForProject(projectId) {
+  if (!projectId) return '';
+  return `${ACTIVE_BOARD_KEY_PREFIX}${projectId}`;
+}
+
+function loadLegacyActiveBoardId() {
   try {
-    const value = localStorage.getItem(ACTIVE_BOARD_KEY);
+    const value = localStorage.getItem(ACTIVE_BOARD_KEY_LEGACY);
     return value || null;
   } catch (err) {
     return null;
   }
+}
+
+function loadActiveBoardIdForProject(projectId) {
+  if (!projectId) return null;
+  try {
+    const scoped = localStorage.getItem(activeBoardKeyForProject(projectId));
+    if (scoped) return scoped;
+  } catch (err) {
+    return null;
+  }
+  return loadLegacyActiveBoardId();
 }
 
 function loadActiveProjectId() {
@@ -153,13 +174,16 @@ function loadActiveProjectId() {
   }
 }
 
-function saveActiveBoardId(boardId) {
+function saveActiveBoardIdForProject(projectId, boardId) {
+  if (!projectId) return;
+  const scopedKey = activeBoardKeyForProject(projectId);
   try {
     if (!boardId) {
-      localStorage.removeItem(ACTIVE_BOARD_KEY);
+      localStorage.removeItem(scopedKey);
       return;
     }
-    localStorage.setItem(ACTIVE_BOARD_KEY, boardId);
+    localStorage.setItem(scopedKey, boardId);
+    localStorage.removeItem(ACTIVE_BOARD_KEY_LEGACY);
   } catch (err) {
     return;
   }
@@ -236,6 +260,7 @@ let statusTimer = null;
 let currentForm = null;
 let currentComponentKey = null;
 let activeBoardEdit = null;
+let activeProjectEdit = null;
 let resizeSnapshot = null;
 let dragSnapshot = null;
 let realtimeAgent = null;
@@ -348,7 +373,7 @@ const COMPONENT_CONFIG = [
     key: 'MermaidBlock',
     label: 'Mermaid Diagram',
     component: 'MermaidBlock',
-    size: { w: 380, h: 260 },
+    size: { w: 640, h: 420 },
     fields: [
       { key: 'title', label: 'Title', type: 'text', placeholder: 'Mermaid Diagram' },
       { key: 'mermaid', label: 'Mermaid Source', type: 'textarea', placeholder: 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Done]\n  B -->|No| D[Retry]' }
@@ -552,7 +577,7 @@ const CHART_COMPONENT_SPECS = [
 const AI_COMPONENT_SIZES = new Map(CHART_COMPONENT_SPECS.map((spec) => [spec.key, spec.size]));
 AI_COMPONENT_SIZES.set('MarkdownBlock', { w: 360, h: 240 });
 AI_COMPONENT_SIZES.set('SvgBlock', { w: 380, h: 260 });
-AI_COMPONENT_SIZES.set('MermaidBlock', { w: 380, h: 260 });
+AI_COMPONENT_SIZES.set('MermaidBlock', { w: 640, h: 420 });
 const ASSET_URLS = new Map();
 
 const DB_NAME = 'elenweave_assets';
@@ -571,6 +596,8 @@ let activeProjectId = null;
 let boardIndex = [];
 let activeBoardId = null;
 let isBoardSwitching = false;
+let projectSwitchSeq = 0;
+let projectSwitchDepth = 0;
 
 view.registerComponent('OptionPicker', { render: OptionPicker });
 view.registerComponent('TextInput', { render: TextInput });
@@ -618,12 +645,20 @@ els.btnNewProject?.addEventListener('click', () => {
   createProject(`Project ${nextIndex}`);
 });
 
+els.btnRenameProject?.addEventListener('click', () => {
+  startProjectEdit();
+});
+
 els.projectSelect?.addEventListener('change', (event) => {
   const target = event.target;
   if (!(target instanceof HTMLSelectElement)) return;
   const projectId = target.value;
   if (!projectId || projectId === activeProjectId) return;
   activateProject(projectId);
+});
+
+els.projectSelect?.addEventListener('dblclick', () => {
+  startProjectEdit();
 });
 
 els.btnLink.addEventListener('click', () => {
@@ -695,6 +730,11 @@ els.panelExpand?.addEventListener('click', () => {
   appShell.classList.remove('is-collapsed');
   if (els.panelToggle) els.panelToggle.textContent = 'Collapse';
   saveCollapseState(PANEL_STATE_KEY, false);
+});
+
+els.toolsToggle?.addEventListener('click', () => {
+  const expanded = els.toolsToggle?.getAttribute('aria-expanded') === 'true';
+  setToolsExpanded(!expanded);
 });
 
 els.hintToggle?.addEventListener('click', () => {
@@ -2125,29 +2165,95 @@ function focusSelectionIfNavigating(node) {
   }
 }
 
-function ensureBoardIndexEntry(id, name, projectId = activeProjectId || 'local-default') {
-  if (!id) return null;
-  const existing = boardIndex.find((entry) => entry.id === id);
+function boardScopeProjectId(projectId) {
+  return projectId || activeProjectId || 'local-default';
+}
+
+function boardCompositeKey(projectId, boardId) {
+  return `${projectId}::${boardId}`;
+}
+
+function getBoardIndexEntry(boardId, projectId = boardScopeProjectId()) {
+  return boardIndex.find((entry) => entry.id === boardId && (entry.projectId || null) === (projectId || null)) || null;
+}
+
+function getBoardIndexEntriesById(boardId) {
+  return boardIndex.filter((entry) => entry.id === boardId);
+}
+
+function getBoardsForProject(projectId) {
+  return boardIndex.filter((entry) => (entry.projectId || null) === (projectId || null));
+}
+
+function removeBoardsForProject(projectId) {
+  boardIndex = boardIndex.filter((entry) => (entry.projectId || null) !== (projectId || null));
+}
+
+function upsertBoardIndexEntry(entry) {
+  const projectId = boardScopeProjectId(entry?.projectId);
+  const boardId = String(entry?.id || '');
+  if (!projectId || !boardId) return null;
+  const conflict = getBoardIndexEntriesById(boardId).find((item) => (item.projectId || null) !== (projectId || null));
+  if (conflict) {
+    console.warn('Refusing to link board id across multiple projects', {
+      boardId,
+      incomingProjectId: projectId,
+      existingProjectId: conflict.projectId
+    });
+    return null;
+  }
+  const existing = getBoardIndexEntry(boardId, projectId);
   if (existing) {
-    if (name && existing.name !== name) existing.name = name;
-    if (projectId && existing.projectId !== projectId) existing.projectId = projectId;
+    Object.assign(existing, {
+      name: entry?.name || existing.name || 'Untitled',
+      updatedAt: entry?.updatedAt || existing.updatedAt || Date.now(),
+      projectId
+    });
     return existing;
   }
-  const entry = {
+  const row = {
+    id: boardId,
+    projectId,
+    name: entry?.name || 'Untitled',
+    updatedAt: entry?.updatedAt || Date.now()
+  };
+  boardIndex.push(row);
+  return row;
+}
+
+function ensureBoardIndexEntry(id, name, projectId = boardScopeProjectId()) {
+  if (!id) return null;
+  const existing = getBoardIndexEntry(id, projectId);
+  if (existing) {
+    if (name && existing.name !== name) existing.name = name;
+    return existing;
+  }
+  const conflicts = getBoardIndexEntriesById(id).filter((entry) => (entry.projectId || null) !== (projectId || null));
+  if (conflicts.length) {
+    console.warn('Board id collision across projects', { boardId: id, projectId, conflicts: conflicts.map((entry) => entry.projectId) });
+  }
+  return upsertBoardIndexEntry({
     id,
     projectId,
     name: name || 'Untitled',
     updatedAt: Date.now()
-  };
-  boardIndex.push(entry);
-  return entry;
+  });
 }
 
 function updateBoardIndexEntry(id, patch = {}) {
   if (!id) return null;
-  const entry = ensureBoardIndexEntry(id, patch.name, patch.projectId);
+  const projectId = boardScopeProjectId(patch.projectId);
+  const entry = ensureBoardIndexEntry(id, patch.name, projectId);
   if (!entry) return null;
-  Object.assign(entry, patch);
+  if ((entry.projectId || null) !== (projectId || null)) {
+    console.warn('Skipped board index update due project ownership mismatch', {
+      boardId: id,
+      expectedProjectId: projectId,
+      actualProjectId: entry.projectId
+    });
+    return null;
+  }
+  Object.assign(entry, { ...patch, projectId });
   return entry;
 }
 
@@ -2176,11 +2282,30 @@ function updateProjectIndexEntry(id, patch = {}) {
 }
 
 function getActiveProjectBoards() {
-  return boardIndex.filter((entry) => (entry.projectId || null) === (activeProjectId || null));
+  return getBoardsForProject(activeProjectId);
+}
+
+function validateBoardIndexInvariants() {
+  const seen = new Set();
+  for (const entry of boardIndex) {
+    if (!entry?.id || !entry?.projectId) {
+      console.warn('Invalid board index entry', entry);
+      continue;
+    }
+    const key = boardCompositeKey(entry.projectId, entry.id);
+    if (seen.has(key)) {
+      console.warn('Duplicate board index entry', entry);
+      continue;
+    }
+    seen.add(key);
+  }
 }
 
 function refreshProjectList() {
   if (!els.projectSelect) return;
+  if (activeProjectEdit?.projectId && !projectIndex.some((entry) => entry.id === activeProjectEdit.projectId)) {
+    cancelProjectEdit({ force: true });
+  }
   const current = activeProjectId;
   els.projectSelect.innerHTML = '';
   projectIndex.forEach((project) => {
@@ -2257,7 +2382,10 @@ async function createLocalBoard(name, options = {}) {
   boardIndex.push(entry);
   await saveGraphPayload(id, createEmptyGraphPayload(id, entry.name));
   if (options.activate !== false) {
-    await activateBoard(id, { skipSave: Boolean(options.skipSaveOnActivate) });
+    await activateBoard(id, {
+      skipSave: Boolean(options.skipSaveOnActivate),
+      projectId
+    });
   }
   if (options.queueEdit) {
     queueBoardEdit(id);
@@ -2294,19 +2422,175 @@ async function createProject(name) {
   setStatus('Project created.');
 }
 
-async function activateProject(projectId, options = {}) {
-  if (!projectId) return;
-  if (activeProjectId === projectId && !options.force) return;
-  if (!projectIndex.some((entry) => entry.id === projectId)) return;
+async function renameProject(projectId, name) {
+  const id = String(projectId || '').trim();
+  const nextName = String(name || '').trim();
+  if (!id) return false;
+  if (!nextName) {
+    setStatus('Project name is empty.', 1600);
+    return false;
+  }
+  const existing = projectIndex.find((entry) => entry.id === id);
+  if (!existing) return false;
+  if (nextName === existing.name) return true;
 
   if (await ensureServerMode()) {
     try {
-      if (!options.skipSave) {
-        await saveActiveGraph();
-      }
-      activeProjectId = projectId;
+      const response = await apiFetch(`/api/projects/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: { name: nextName }
+      });
+      const project = response?.project;
+      updateProjectIndexEntry(id, {
+        name: project?.name || nextName,
+        updatedAt: project?.updatedAt || Date.now()
+      });
+      refreshProjectList();
+      setStatus('Project renamed.');
+      return true;
+    } catch (err) {
+      console.warn('Project rename failed', err);
+      setStatus('Project rename failed.', 1800);
+      return false;
+    }
+  }
+
+  updateProjectIndexEntry(id, {
+    name: nextName,
+    updatedAt: Date.now()
+  });
+  await saveWorkspaceIndex();
+  refreshProjectList();
+  setStatus('Project renamed.');
+  return true;
+}
+
+function startProjectEdit(projectId = activeProjectId) {
+  if (!projectId) {
+    setStatus('Select a project first.', 1500);
+    return;
+  }
+  const project = projectIndex.find((entry) => entry.id === projectId);
+  if (!project || !els.projectSelect || !els.projectSelectWrap) return;
+
+  if (activeProjectEdit?.projectId === projectId) {
+    activeProjectEdit.input?.focus();
+    activeProjectEdit.input?.select();
+    return;
+  }
+  if (activeProjectEdit) {
+    cancelProjectEdit({ force: true });
+  }
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'project-rename-input';
+  input.value = project.name || 'Untitled Project';
+  input.setAttribute('aria-label', 'Rename project');
+
+  els.projectSelectWrap.classList.add('is-editing');
+  els.projectSelectWrap.appendChild(input);
+  els.projectSelect.disabled = true;
+  els.projectSelect.setAttribute('aria-hidden', 'true');
+  els.btnRenameProject?.setAttribute('aria-pressed', 'true');
+  if (els.btnRenameProject) {
+    els.btnRenameProject.disabled = true;
+  }
+
+  activeProjectEdit = {
+    projectId,
+    originalName: project.name || 'Untitled Project',
+    input,
+    committing: false
+  };
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      commitProjectEdit(input.value);
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelProjectEdit({ restoreFocus: true, force: true });
+    }
+  });
+  input.addEventListener('blur', () => {
+    commitProjectEdit(input.value);
+  });
+
+  input.focus();
+  input.select();
+}
+
+async function commitProjectEdit(value) {
+  const session = activeProjectEdit;
+  if (!session?.projectId || session.committing) return;
+  const nextName = String(value || '').trim();
+  if (!nextName) {
+    setStatus('Project name is empty.', 1600);
+    session.input?.focus();
+    session.input?.select();
+    return;
+  }
+  if (nextName === session.originalName) {
+    cancelProjectEdit({ force: true });
+    return;
+  }
+  session.committing = true;
+  const ok = await renameProject(session.projectId, nextName);
+  if (activeProjectEdit !== session) return;
+  if (ok) {
+    cancelProjectEdit({ force: true });
+    return;
+  }
+  session.committing = false;
+  session.input?.focus();
+  session.input?.select();
+}
+
+function cancelProjectEdit(options = {}) {
+  const session = activeProjectEdit;
+  if (!session) return;
+  if (session.committing && !options.force) return;
+  session.input?.remove();
+  els.projectSelectWrap?.classList.remove('is-editing');
+  if (els.projectSelect) {
+    els.projectSelect.disabled = false;
+    els.projectSelect.removeAttribute('aria-hidden');
+  }
+  if (els.btnRenameProject) {
+    els.btnRenameProject.disabled = false;
+    els.btnRenameProject.removeAttribute('aria-pressed');
+  }
+  activeProjectEdit = null;
+  if (options.restoreFocus && els.projectSelect) {
+    els.projectSelect.focus();
+  }
+}
+
+async function activateProject(projectId, options = {}) {
+  if (!projectId) return;
+  if (!projectIndex.some((entry) => entry.id === projectId)) return;
+  if (activeProjectId === projectId && !options.force) return;
+  cancelProjectEdit({ force: true });
+  const switchSeq = ++projectSwitchSeq;
+  projectSwitchDepth += 1;
+
+  try {
+    if (!options.skipSave) {
+      await saveActiveGraph();
+      if (switchSeq !== projectSwitchSeq) return;
+    }
+
+    activeProjectId = projectId;
+    activeBoardId = null;
+    refreshProjectList();
+    refreshBoardList();
+
+    if (await ensureServerMode()) {
       const boardsPayload = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/boards`);
-      boardIndex = Array.isArray(boardsPayload?.boards)
+      if (switchSeq !== projectSwitchSeq) return;
+      const fetchedBoards = Array.isArray(boardsPayload?.boards)
         ? boardsPayload.boards.map((entry) => ({
           id: entry.id,
           projectId,
@@ -2314,10 +2598,13 @@ async function activateProject(projectId, options = {}) {
           updatedAt: entry.updatedAt || Date.now()
         }))
         : [];
+      removeBoardsForProject(projectId);
+      fetchedBoards.forEach((entry) => upsertBoardIndexEntry(entry));
 
-      let nextBoardId = loadActiveBoardId();
-      if (!boardIndex.some((entry) => entry.id === nextBoardId)) {
-        nextBoardId = boardIndex[0]?.id || null;
+      let nextBoardId = loadActiveBoardIdForProject(projectId);
+      const projectBoards = getBoardsForProject(projectId);
+      if (!projectBoards.some((entry) => entry.id === nextBoardId)) {
+        nextBoardId = projectBoards[0]?.id || null;
       }
 
       if (!nextBoardId && options.createBoardIfEmpty !== false) {
@@ -2325,9 +2612,10 @@ async function activateProject(projectId, options = {}) {
           method: 'POST',
           body: { name: 'Board 01' }
         });
+        if (switchSeq !== projectSwitchSeq) return;
         const board = created?.board;
         if (board?.id) {
-          boardIndex.push({
+          upsertBoardIndexEntry({
             id: board.id,
             projectId,
             name: board.name || 'Board 01',
@@ -2337,56 +2625,70 @@ async function activateProject(projectId, options = {}) {
         }
       }
 
+      if (switchSeq !== projectSwitchSeq) return;
       activeBoardId = nextBoardId;
       await saveWorkspaceIndex();
+      if (switchSeq !== projectSwitchSeq) return;
       refreshProjectList();
       refreshBoardList();
       if (nextBoardId) {
-        await activateBoard(nextBoardId, { skipSave: true });
+        await activateBoard(nextBoardId, { skipSave: true, projectId });
       }
-      return;
-    } catch (err) {
-      console.warn('Project activation failed', err);
-      setStatus('Project load failed.', 1800);
+      validateBoardIndexInvariants();
       return;
     }
-  }
 
-  if (!options.skipSave) {
-    await saveActiveGraph();
-  }
-  activeProjectId = projectId;
-  const boards = getActiveProjectBoards();
-  let nextBoardId = loadActiveBoardId();
-  if (!boards.some((entry) => entry.id === nextBoardId)) {
-    nextBoardId = boards[0]?.id || null;
-  }
-  if (!nextBoardId && options.createBoardIfEmpty !== false) {
-    const created = await createLocalBoard('Board 01', {
-      activate: false,
-      queueEdit: false
-    });
-    nextBoardId = created.id;
-  }
-  activeBoardId = nextBoardId;
-  await saveWorkspaceIndex();
-  refreshProjectList();
-  refreshBoardList();
-  if (nextBoardId) {
-    await activateBoard(nextBoardId, { skipSave: true });
+    let nextBoardId = loadActiveBoardIdForProject(projectId);
+    const boards = getBoardsForProject(projectId);
+    if (!boards.some((entry) => entry.id === nextBoardId)) {
+      nextBoardId = boards[0]?.id || null;
+    }
+    if (!nextBoardId && options.createBoardIfEmpty !== false) {
+      const created = await createLocalBoard('Board 01', {
+        activate: false,
+        queueEdit: false
+      });
+      if (switchSeq !== projectSwitchSeq) return;
+      nextBoardId = created.id;
+    }
+    if (switchSeq !== projectSwitchSeq) return;
+    activeBoardId = nextBoardId;
+    await saveWorkspaceIndex();
+    if (switchSeq !== projectSwitchSeq) return;
+    refreshProjectList();
+    refreshBoardList();
+    if (nextBoardId) {
+      await activateBoard(nextBoardId, { skipSave: true, projectId });
+    }
+    validateBoardIndexInvariants();
+  } catch (err) {
+    console.warn('Project activation failed', err);
+    setStatus('Project load failed.', 1800);
+  } finally {
+    projectSwitchDepth = Math.max(0, projectSwitchDepth - 1);
   }
 }
 
 async function activateBoard(boardId, options = {}) {
+  const projectId = boardScopeProjectId(options.projectId);
   if (!boardId || isBoardSwitching) return;
-  if (activeBoardId === boardId && view?.graph) return;
+  if (activeBoardId === boardId && view?.graph && activeProjectId === projectId) return;
   isBoardSwitching = true;
   try {
+    activeProjectId = projectId;
     if (!options.skipSave) {
       await saveActiveGraph();
     }
+    const scopedEntry = getBoardIndexEntry(boardId, projectId);
+    if (!scopedEntry) {
+      const conflicts = getBoardIndexEntriesById(boardId).filter((entry) => (entry.projectId || null) !== (projectId || null));
+      if (conflicts.length) {
+        console.warn('Board ownership conflict during activateBoard', { boardId, projectId, conflicts: conflicts.map((entry) => entry.projectId) });
+        return;
+      }
+    }
     let payload = await loadGraphPayload(boardId);
-    const entry = ensureBoardIndexEntry(boardId, payload?.name || 'Untitled', activeProjectId || 'local-default');
+    const entry = ensureBoardIndexEntry(boardId, payload?.name || scopedEntry?.name || 'Untitled', projectId);
     if (!payload) {
       payload = createEmptyGraphPayload(boardId, entry?.name || 'Untitled');
       await saveGraphPayload(boardId, payload);
@@ -2395,6 +2697,7 @@ async function activateBoard(boardId, options = {}) {
     view.importGraph(payload, { makeActive: true });
     activeBoardId = boardId;
     await saveWorkspaceIndex();
+    validateBoardIndexInvariants();
   } catch (err) {
     console.warn('Board activation failed', err);
   } finally {
@@ -2422,7 +2725,7 @@ async function createBoard(name) {
         updatedAt: board.updatedAt || Date.now()
       };
       boardIndex.push(entry);
-      await activateBoard(board.id);
+      await activateBoard(board.id, { projectId: activeProjectId });
       setStatus('Board created.');
       queueBoardEdit(board.id);
     } catch (err) {
@@ -2460,7 +2763,7 @@ async function importBoardPayload(payload) {
     name
   };
   await saveGraphPayload(id, scrubExportPayload(cleanPayload));
-  await activateBoard(id);
+  await activateBoard(id, { projectId: activeProjectId || 'local-default' });
   return id;
 }
 
@@ -2477,7 +2780,7 @@ function refreshBoardList() {
     btn.appendChild(label);
     btn.addEventListener('click', () => {
       if (activeBoardEdit) return;
-      activateBoard(board.id);
+      activateBoard(board.id, { projectId: board.projectId || activeProjectId || 'local-default' });
     });
     btn.addEventListener('dblclick', (e) => {
       e.preventDefault();
@@ -2536,7 +2839,11 @@ function commitBoardEdit(value) {
   if (!activeBoardEdit?.id) return;
   const name = String(value || '').trim();
   if (name) {
-    updateBoardIndexEntry(activeBoardEdit.id, { name, updatedAt: Date.now() });
+    updateBoardIndexEntry(activeBoardEdit.id, {
+      projectId: activeProjectId || 'local-default',
+      name,
+      updatedAt: Date.now()
+    });
     if (view.graph && view.graph.id === activeBoardEdit.id) {
       workspace.renameGraph(activeBoardEdit.id, name);
     }
@@ -2570,7 +2877,7 @@ function cycleBoard(direction) {
   if (!boards.length) return;
   const idx = boards.findIndex((b) => b.id === activeBoardId);
   const next = (idx + direction + boards.length) % boards.length;
-  activateBoard(boards[next].id);
+  activateBoard(boards[next].id, { projectId: boards[next].projectId || activeProjectId || 'local-default' });
 }
 
 function exportBoard() {
@@ -4415,7 +4722,7 @@ async function seedBoards() {
   await saveGraphPayload(firstId, scrubExportPayload(firstPayload));
   await saveGraphPayload(secondId, scrubExportPayload(secondPayload));
   await saveWorkspaceIndex();
-  await activateBoard(firstId, { skipSave: true });
+  await activateBoard(firstId, { skipSave: true, projectId: activeProjectId });
 }
 
 async function toggleRecording() {
@@ -4538,7 +4845,7 @@ function buildWorkspaceIndexPayload() {
 async function saveWorkspaceIndex() {
   if (await ensureServerMode()) {
     saveActiveProjectId(activeProjectId);
-    saveActiveBoardId(activeBoardId);
+    saveActiveBoardIdForProject(activeProjectId, activeBoardId);
     return;
   }
   const db = await openDb();
@@ -4861,6 +5168,17 @@ function updateEdgeToggle() {
   els.edgeToggle.classList.toggle('active', style === 'curved');
 }
 
+function setToolsExpanded(expanded) {
+  const isExpanded = Boolean(expanded);
+  if (els.toolsBody) {
+    els.toolsBody.hidden = !isExpanded;
+  }
+  if (els.toolsToggle) {
+    els.toolsToggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+    els.toolsToggle.classList.toggle('active', isExpanded);
+  }
+}
+
 function restoreUiState() {
   const panelCollapsed = readCollapseState(PANEL_STATE_KEY);
   if (appShell && panelCollapsed) {
@@ -4871,6 +5189,7 @@ function restoreUiState() {
   if (els.hintCenter && hintCollapsed) {
     els.hintCenter.classList.add('is-collapsed');
   }
+  setToolsExpanded(false);
 }
 
 async function initApp() {
@@ -4943,7 +5262,7 @@ async function restoreServerWorkspace() {
       }))
       : [];
 
-    let boardId = loadActiveBoardId();
+    let boardId = loadActiveBoardIdForProject(activeProjectId);
     if (!boardIndex.some((entry) => entry.id === boardId)) {
       boardId = boardIndex[0]?.id || null;
     }
@@ -4961,8 +5280,9 @@ async function restoreServerWorkspace() {
       });
       boardId = createdBoard.board.id;
     }
+    validateBoardIndexInvariants();
     activeBoardId = boardId;
-    await activateBoard(activeBoardId, { skipSave: true });
+    await activateBoard(activeBoardId, { skipSave: true, projectId: activeProjectId });
     return true;
   } catch (err) {
     console.warn('Server workspace restore failed', err);
@@ -4999,7 +5319,7 @@ async function restoreWorkspace() {
       await saveWorkspaceIndex();
       await clearLegacyWorkspacePayload();
       if (!activeBoardId) return false;
-      await activateBoard(activeBoardId, { skipSave: true });
+      await activateBoard(activeBoardId, { skipSave: true, projectId: activeProjectId });
       return true;
     }
     projectIndex = Array.isArray(index.projects) && index.projects.length
@@ -5013,14 +5333,21 @@ async function restoreWorkspace() {
     if (!projectIndex.some((entry) => entry.id === activeProjectId)) {
       activeProjectId = projectIndex[0]?.id || null;
     }
-    boardIndex = index.boards.map((entry) => ({
+    const fallbackProjectId = activeProjectId || projectIndex[0]?.id || 'local-default';
+    const storedBoards = Array.isArray(index.boards) ? index.boards : [];
+    boardIndex = storedBoards.map((entry) => ({
       id: entry.id,
-      projectId: entry.projectId || activeProjectId || 'local-default',
+      projectId: entry.projectId || fallbackProjectId,
       name: entry.name || 'Untitled',
       updatedAt: entry.updatedAt || Date.now()
     }));
-    const activeBoards = boardIndex.filter((entry) => (entry.projectId || null) === (activeProjectId || null));
-    activeBoardId = activeBoards.some((entry) => entry.id === index.activeGraphId)
+    boardIndex.forEach((entry) => ensureProjectIndexEntry(entry.projectId, entry.projectId === 'local-default' ? 'Local Project' : 'Untitled Project'));
+    validateBoardIndexInvariants();
+    const activeBoards = getBoardsForProject(activeProjectId);
+    const scopedActiveBoardId = loadActiveBoardIdForProject(activeProjectId);
+    activeBoardId = activeBoards.some((entry) => entry.id === scopedActiveBoardId)
+      ? scopedActiveBoardId
+      : activeBoards.some((entry) => entry.id === index.activeGraphId)
       ? index.activeGraphId
       : activeBoards[0]?.id || null;
     if (!activeBoardId) {
@@ -5032,7 +5359,7 @@ async function restoreWorkspace() {
       activeBoardId = created.id;
       await saveWorkspaceIndex();
     }
-    await activateBoard(activeBoardId, { skipSave: true });
+    await activateBoard(activeBoardId, { skipSave: true, projectId: activeProjectId });
     return true;
   } catch (err) {
     console.warn('Workspace restore failed', err);
@@ -5042,9 +5369,11 @@ async function restoreWorkspace() {
 
 let workspaceSaveTimer = null;
 function scheduleWorkspaceSave() {
+  if (projectSwitchDepth > 0) return;
   if (workspaceSaveTimer) window.clearTimeout(workspaceSaveTimer);
   workspaceSaveTimer = window.setTimeout(async () => {
     workspaceSaveTimer = null;
+    if (projectSwitchDepth > 0) return;
     try {
       await saveActiveGraph();
     } catch (err) {

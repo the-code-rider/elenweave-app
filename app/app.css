@@ -224,6 +224,14 @@ body {
     pointer-events: none;
 }
 
+.project-select-wrap.is-editing::after {
+    display: none;
+}
+
+.project-select-wrap.is-editing #projectSelect {
+    display: none;
+}
+
 #projectSelect {
     width: 100%;
     appearance: none;
@@ -243,6 +251,25 @@ body {
     outline-offset: 1px;
 }
 
+.project-rename-input {
+    width: 100%;
+    appearance: none;
+    border-radius: 10px;
+    border: 1px solid color-mix(in oklab, var(--app-border) 70%, rgba(255, 255, 255, 0.12));
+    background: color-mix(in oklab, var(--app-input) 88%, transparent);
+    color: var(--app-text);
+    min-height: 34px;
+    padding: 6px 10px;
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    text-transform: none;
+}
+
+.project-rename-input:focus {
+    outline: 2px solid color-mix(in oklab, var(--app-accent) 65%, transparent);
+    outline-offset: 1px;
+}
+
 .project-add-btn {
     min-width: 34px;
     width: 34px;
@@ -254,6 +281,17 @@ body {
     line-height: 1;
 }
 
+.project-rename-btn {
+    min-width: 34px;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    font-size: 0.92rem;
+    line-height: 1;
+}
+
 .panel-section--boards .btn {
     padding: 6px 10px;
     font-size: 0.72rem;
@@ -262,11 +300,16 @@ body {
 
 .panel-section--tools {
     margin-top: auto;
+    display: grid;
+    gap: 8px;
 }
 
-.panel-section--tools .section-title {
-    font-size: 0.68rem;
-    letter-spacing: 0.2em;
+.panel-section--tools .tools-body[hidden] {
+    display: none;
+}
+
+.panel-section--tools .tools-toggle {
+    width: 100%;
 }
 
 .panel-section--tools .btn-row {
@@ -1312,16 +1355,73 @@ html[data-theme="light"] .input-bar.is-ai-busy {
     white-space: pre-wrap;
 }
 
-.ew-svg-body svg,
-.ew-mermaid-body svg {
+.ew-svg-body svg {
     display: block;
     max-width: 100%;
     height: auto;
 }
 
+.ew-mermaid-body {
+    align-items: flex-start;
+    justify-content: flex-start;
+}
+
+.ew-mermaid-body svg {
+    display: block;
+    max-width: none !important;
+    height: auto;
+}
+
+.ew-mermaid .ew-node-header {
+    gap: 8px;
+}
+
+.ew-mermaid-controls {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    pointer-events: auto;
+}
+
+.ew-mermaid-control {
+    border: 1px solid color-mix(in oklab, var(--app-border) 75%, transparent);
+    background: color-mix(in oklab, var(--app-panel) 84%, transparent);
+    color: var(--app-text);
+    border-radius: 8px;
+    min-height: 22px;
+    padding: 0 6px;
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.ew-mermaid-control:hover:not(:disabled) {
+    border-color: color-mix(in oklab, var(--app-accent) 65%, var(--app-border));
+}
+
+.ew-mermaid-control:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.ew-mermaid-zoom-label {
+    min-width: 42px;
+    text-align: right;
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+    color: var(--app-muted);
+}
+
 .ew-svg-body.is-loading,
 .ew-mermaid-body.is-loading {
     color: var(--app-muted);
+}
+
+.ew-mermaid-body.is-loading {
+    align-items: center;
+    justify-content: center;
 }
 
 .ew-svg-body.is-error,
@@ -1363,7 +1463,8 @@ html[data-theme="light"] .input-bar.is-ai-busy {
     animation: ew-realtime-pulse 1.1s ease-in-out infinite;
 }
 
-.app-panel #btnNew {
+.app-panel #btnNew,
+.app-panel #btnNewProject {
     background: var(--app-accent);
     border-color: var(--app-accent);
     color: #04121d;
@@ -1376,7 +1477,8 @@ html[data-theme="light"] .app-panel .btn {
     box-shadow: 0 8px 14px rgba(18, 24, 38, 0.08);
 }
 
-html[data-theme="light"] .app-panel #btnNew {
+html[data-theme="light"] .app-panel #btnNew,
+html[data-theme="light"] .app-panel #btnNewProject {
     color: #ffffff;
     box-shadow: 0 10px 18px color-mix(in oklab, var(--app-accent) 35%, transparent);
 }
