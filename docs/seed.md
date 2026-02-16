@@ -37,7 +37,7 @@ You can provide one of the following:
 1. Native snapshot directory (recommended)
 2. Portable JSON bundle
 
-Use either env vars or CLI flags (`node server/cli.js ...`).
+Use either env vars or CLI flags (`npx elenweave-app ...` or `node server/cli.js ...`).
 
 Env vars:
 
@@ -46,8 +46,10 @@ Env vars:
 
 CLI:
 
-- `node server/cli.js --seed-dir /path/to/seed`
-- `node server/cli.js --seed-json /path/to/seed.json`
+- `npx elenweave-app --mode server --seed-dir /path/to/seed`
+- `npx elenweave-app --mode server --seed-json /path/to/seed.json`
+- `node server/cli.js --mode server --seed-dir /path/to/seed`
+- `node server/cli.js --mode server --seed-json /path/to/seed.json`
 
 Do not set both `seed-dir` and `seed-json` at the same time.
 
@@ -304,5 +306,5 @@ Read-only canonical data with local fork:
 ```bash
 ELENWEAVE_SEED_READONLY=projects \
 ELENWEAVE_READONLY_FORK=local \
-node server/cli.js --seed-dir /srv/seed
+npx elenweave-app --mode server --seed-dir /srv/seed
 ```

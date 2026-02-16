@@ -1,3 +1,11 @@
+<p align="center">
+  <img src="./logo.webp" alt="Elenweave logo" width="180" />
+</p>
+
+<p align="center">
+  <a href="https://elenweave.com">https://elenweave.com</a>
+</p>
+
 # Elenweave
 
 Elenweave is a shared canvas where humans and AI agents can think, sketch, and build together.
@@ -13,27 +21,96 @@ It is designed for expressive work: drop ideas as nodes, connect them, attach me
 ## Core Capabilities
 
 - Create and edit boards with rich node types (text, forms, charts, code, markdown, media)
+- Use `MermaidBlock` and `SvgBlock` nodes for diagram-driven explanations
 - Ask AI to generate board actions using the `ew-actions/v1` plan contract
 - Add follow-up AI interactions through `TextInput` and `OptionPicker` nodes
 - Attach image/audio/text assets to nodes
+- Use realtime Gemini voice mode from the app panel
 - Persist work by project/board (server mode) or IndexedDB (client mode)
 
 ## Run Locally
+
+Install globally (optional):
+
+```bash
+npm i -g elenweave-app
+```
+
+Run (recommended, no global install needed):
+
+```bash
+npx elenweave-app
+```
+
+Run after global install:
+
+```bash
+elenweave-app
+```
+
+Install Codex skill:
+
+```bash
+npx skills add the-code-rider/elenweave-skill
+# repo: https://github.com/the-code-rider/elenweave-skill.git
+```
+
+Default behavior with no flags (`npx elenweave-app`):
+
+- mode: `server`
+- host: `127.0.0.1`
+- port: `8787`
+- data root: `~/.elenweave` (Windows: `%USERPROFILE%\\.elenweave`)
+- API routes enabled (`/api/*`)
+- browser runtime injected as `storageMode: "server"`
+- seed policy default: `first-run`
+- seed read-only mode default: `off`
+- read-only fork default: `local`
+
+Open:
+
+```text
+http://127.0.0.1:8787/
+```
+
+Development run from repo:
 
 ```bash
 npm run server
 ```
 
-Or with CLI:
+Run as packaged app (published):
 
 ```bash
-npx elenweave-server
+npx elenweave-app
 ```
 
-Open:
+Or run with file-watch:
 
-```text
-http://127.0.0.1:8787/app/index.html
+```bash
+npm run dev
+```
+
+CLI mode:
+
+```bash
+npm run server:cli -- --mode server --host 0.0.0.0 --port 8080
+# or
+node server/cli.js --mode server --host 0.0.0.0 --port 8080
+```
+
+Client-only runtime (browser IndexedDB, API disabled):
+
+```bash
+npx elenweave-app --mode client
+# or
+npm run server:cli -- --mode client
+```
+
+If startup fails with `EADDRINUSE` on `127.0.0.1:8787`, either stop the process using that port or start on a different port:
+
+```bash
+npm run server:cli -- --port 8788
 ```
 
 ## Optional: Local AI Proxy
@@ -43,6 +120,8 @@ When running the local server, AI keys can be loaded from environment variables 
 See:
 
 - `docs/SERVER.md`
+- `docs/seed.md`
+- `docs/followup.md`
 - `server/config.example.json`
 
 ## Configuration
@@ -61,13 +140,20 @@ Accepted params:
 | `seedReadOnlyProjectIds` | `string[]` | No | Read-only project IDs when `seedReadOnlyMode='projects'`. |
 | `readOnlyFork` | `'off' \| 'local'` | No | Read-only edit behavior (`local` = browser IndexedDB fork). |
 
-### AI Config File (`config.json`)
+Mode behavior:
+
+- `storageMode: "server"`: app uses `/api/projects/*` and file-backed server storage.
+- `storageMode: "client"`: app uses browser IndexedDB only and does not call server APIs.
+
+### App/AI Config File (`config.json`)
 
 File lookup order:
 
-1. `ELENWEAVE_AI_CONFIG` (explicit path)
-2. `./config.json`
-3. `./server/config.json`
+1. `ELENWEAVE_CONFIG` (explicit path, CLI: `--config`)
+2. `ELENWEAVE_AI_CONFIG` (legacy explicit path)
+3. `~/.elenweave/config.json` (default location)
+4. `./config.json`
+5. `./server/config.json`
 
 Accepted params:
 
@@ -99,6 +185,7 @@ Accepted params:
 |---|---|---|
 | `HOST` | `127.0.0.1` | Server bind host |
 | `PORT` | `8787` | Server bind port |
+| `ELENWEAVE_RUNTIME_MODE` | `server` | Runtime mode: `server` or `client` |
 | `ELENWEAVE_DATA_DIR` | `~/.elenweave` | Data root for projects/boards/assets |
 | `ELENWEAVE_LOCK_TIMEOUT_MS` | `5000` | Lock wait timeout (ms) |
 | `ELENWEAVE_LOCK_RETRY_MS` | `50` | Lock retry interval (ms) |
@@ -108,6 +195,7 @@ Accepted params:
 | `ELENWEAVE_SEED_VERSION` | _(unset)_ | Seed version used with `versioned` policy |
 | `ELENWEAVE_SEED_READONLY` | `off` | Seed read-only mode: `off`, `all`, `projects` |
 | `ELENWEAVE_READONLY_FORK` | `local` | Read-only fork behavior: `local` or `off` |
+| `ELENWEAVE_CONFIG` | _(unset)_ | Path to app/AI config JSON |
 | `ELENWEAVE_AI_CONFIG` | _(unset)_ | Path to AI config JSON |
 | `ELENWEAVE_OPENAI_API_KEY` | _(unset)_ | Preferred OpenAI key env var |
 | `OPENAI_API_KEY` | _(unset)_ | OpenAI key env var |

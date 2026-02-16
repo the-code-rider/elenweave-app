@@ -1,11 +1,26 @@
 {
   "name": "elenweave-app",
-  "private": true,
+  "version": "0.1.0-beta.1",
+  "description": "Local visual canvas app for humans and coding agents.",
   "type": "module",
+  "bin": {
+    "elenweave-app": "server/cli.js"
+  },
   "scripts": {
     "server": "node server/index.js",
+    "server:cli": "node server/cli.js",
     "start": "npm run server",
-    "dev": "node --watch server/index.js"
+    "dev": "node --watch server/index.js",
+    "pack:check": "npm pack --dry-run"
+  },
+  "files": [
+    "app",
+    "server",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "tag": "beta"
   },
   "engines": {
     "node": ">=20"

@@ -16,6 +16,16 @@ const INDEX_FILE = path.join(DATA_ROOT, 'index.json');
 const SEED_STATE_FILE = path.join(DATA_ROOT, '.seed-state.json');
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number.parseInt(process.env.PORT || '8787', 10);
+const RUNTIME_MODE_VALUES = new Set(['server', 'client']);
+const RUNTIME_STORAGE_MODE = (() => {
+  const raw = String(
+    process.env.ELENWEAVE_RUNTIME_MODE
+    || process.env.ELENWEAVE_STORAGE_MODE
+    || 'server'
+  ).trim().toLowerCase();
+  return RUNTIME_MODE_VALUES.has(raw) ? raw : 'server';
+})();
+const IS_SERVER_RUNTIME = RUNTIME_STORAGE_MODE === 'server';
 const MAX_BODY_BYTES = 12 * 1024 * 1024;
 const LOCK_TIMEOUT_MS = Number.parseInt(process.env.ELENWEAVE_LOCK_TIMEOUT_MS || '5000', 10);
 const LOCK_RETRY_MS = Number.parseInt(process.env.ELENWEAVE_LOCK_RETRY_MS || '50', 10);
@@ -64,15 +74,22 @@ const RUNTIME_CONFIG_SCRIPT_PATTERN = /<script id="elenweave-runtime-config">[\s
 const SEED_POLICY_VALUES = new Set(['first-run', 'always', 'versioned']);
 const SEED_READONLY_VALUES = new Set(['off', 'all', 'projects']);
 const READONLY_FORK_VALUES = new Set(['off', 'local']);
-const AI_CONFIG_PATHS = (() => {
-  const explicit = String(process.env.ELENWEAVE_AI_CONFIG || '').trim();
+const CONFIG_PATHS = (() => {
+  const explicit = firstNonEmptyString(
+    process.env.ELENWEAVE_CONFIG,
+    process.env.ELENWEAVE_AI_CONFIG
+  );
+  const defaultHomeConfig = path.join(os.homedir(), '.elenweave', 'config.json');
+  const paths = [];
   if (explicit) {
-    return [path.resolve(explicit)];
+    paths.push(path.resolve(explicit));
   }
-  return [
+  paths.push(defaultHomeConfig);
+  paths.push(
     path.join(APP_DIR, 'config.json'),
     path.join(APP_DIR, 'server', 'config.json')
-  ];
+  );
+  return Array.from(new Set(paths));
 })();
 const SEED_OPTIONS = parseSeedOptions();
 const READ_ONLY_CONFIG = {
@@ -144,7 +161,7 @@ function firstNonEmptyString(...values) {
 }
 
 async function loadAiConfig() {
-  for (const file of AI_CONFIG_PATHS) {
+  for (const file of CONFIG_PATHS) {
     try {
       const raw = await fs.readFile(file, 'utf8');
       const parsed = JSON.parse(raw.replace(/^\uFEFF/, ''));
@@ -1889,12 +1906,13 @@ async function sendIndexHtmlWithRuntimeConfig(res, filePath, config) {
 
 async function sendFile(res, filePath) {
   if (isAppIndexFile(filePath)) {
+    const inServerMode = RUNTIME_STORAGE_MODE === 'server';
     await sendIndexHtmlWithRuntimeConfig(res, filePath, {
-      storageMode: 'server',
+      storageMode: RUNTIME_STORAGE_MODE,
       serverBase: '',
-      seedReadOnlyMode: READ_ONLY_CONFIG.mode,
-      seedReadOnlyProjectIds: Array.from(READ_ONLY_CONFIG.projectIds),
-      readOnlyFork: READ_ONLY_CONFIG.fork
+      seedReadOnlyMode: inServerMode ? READ_ONLY_CONFIG.mode : 'off',
+      seedReadOnlyProjectIds: inServerMode ? Array.from(READ_ONLY_CONFIG.projectIds) : [],
+      readOnlyFork: inServerMode ? READ_ONLY_CONFIG.fork : 'off'
     });
     return;
   }
@@ -1905,11 +1923,23 @@ async function sendFile(res, filePath) {
 }
 
 async function start() {
-  await ensureStore();
-  const seedResult = await applySeedBootstrap();
+  let seedResult = { reason: 'runtime-client' };
+  if (IS_SERVER_RUNTIME) {
+    await ensureStore();
+    seedResult = await applySeedBootstrap();
+  } else {
+    applyReadOnlyConfig({}, []);
+  }
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname.startsWith('/api/')) {
+      if (!IS_SERVER_RUNTIME) {
+        sendJson(res, 404, {
+          error: 'ApiDisabled',
+          message: 'API routes are disabled in client runtime mode.'
+        });
+        return;
+      }
       await handleApi(req, res, url);
       return;
     }
@@ -1917,20 +1947,25 @@ async function start() {
   });
   server.listen(PORT, HOST, () => {
     console.log(`Elenweave server running at http://${HOST}:${PORT}`);
-    console.log(`Data root: ${DATA_ROOT}`);
-    if (seedResult?.applied) {
+    console.log(`Runtime mode: ${RUNTIME_STORAGE_MODE}`);
+    if (IS_SERVER_RUNTIME) {
+      console.log(`Data root: ${DATA_ROOT}`);
+      if (seedResult?.applied) {
+        console.log(
+          `Seed applied (${seedResult.sourceType}) from ${seedResult.sourcePath}`
+          + ` [projects=${seedResult.projectCount}, version=${seedResult.seedVersion || 'n/a'}]`
+        );
+      } else if (seedResult?.reason && seedResult.reason !== 'no-source') {
+        console.log(`Seed skipped: ${seedResult.reason}`);
+      }
       console.log(
-        `Seed applied (${seedResult.sourceType}) from ${seedResult.sourcePath}`
-        + ` [projects=${seedResult.projectCount}, version=${seedResult.seedVersion || 'n/a'}]`
+        `Seed read-only mode: ${READ_ONLY_CONFIG.mode}`
+        + (READ_ONLY_CONFIG.mode === 'projects' ? ` (${Array.from(READ_ONLY_CONFIG.projectIds).join(',') || 'none'})` : '')
+        + `; fork=${READ_ONLY_CONFIG.fork}`
       );
-    } else if (seedResult?.reason && seedResult.reason !== 'no-source') {
-      console.log(`Seed skipped: ${seedResult.reason}`);
+      return;
     }
-    console.log(
-      `Seed read-only mode: ${READ_ONLY_CONFIG.mode}`
-      + (READ_ONLY_CONFIG.mode === 'projects' ? ` (${Array.from(READ_ONLY_CONFIG.projectIds).join(',') || 'none'})` : '')
-      + `; fork=${READ_ONLY_CONFIG.fork}`
-    );
+    console.log('Client runtime mode active: /api routes are disabled; browser uses IndexedDB storage.');
   });
 }
 

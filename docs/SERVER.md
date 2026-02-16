@@ -17,7 +17,7 @@ npm run server
 Or via CLI (works well with `npx`):
 
 ```bash
-npx elenweave-server
+npx elenweave-app
 ```
 
 Open:
@@ -37,12 +37,20 @@ OPENAI_API_KEY=... GEMINI_API_KEY=... npm run server
 CLI equivalents:
 
 ```bash
-npx elenweave-server --host 0.0.0.0 --port 8080 --data-dir /path/to/shared-store
+npx elenweave-app --mode server --host 0.0.0.0 --port 8080 --data-dir /path/to/shared-store
+```
+
+Client-only runtime (browser IndexedDB, API routes disabled):
+
+```bash
+npx elenweave-app --mode client
 ```
 
 AI key config file options:
 
-- `ELENWEAVE_AI_CONFIG=/path/to/config.json` (explicit path)
+- `ELENWEAVE_CONFIG=/path/to/config.json` (explicit path)
+- `ELENWEAVE_AI_CONFIG=/path/to/config.json` (legacy explicit path)
+- `~/.elenweave/config.json` (default location)
 - `./config.json` (repo root, auto-detected)
 - `./server/config.json` (auto-detected)
 
@@ -100,7 +108,7 @@ ELENWEAVE_SEED_DIR=/path/to/seed npm run server
 or
 
 ```bash
-npx elenweave-server --seed-dir /path/to/seed
+npx elenweave-app --mode server --seed-dir /path/to/seed
 ```
 
 ### Portable JSON seed
@@ -112,7 +120,7 @@ ELENWEAVE_SEED_JSON=/path/to/seed.json npm run server
 or
 
 ```bash
-npx elenweave-server --seed-json /path/to/seed.json
+npx elenweave-app --mode server --seed-json /path/to/seed.json
 ```
 
 ### Seed application policy
@@ -177,7 +185,7 @@ Native seed folders may include optional `seed.config.json` with read-only defau
 
 ## Notes
 
-- When serving `app/index.html`, the server injects `window.__ELENWEAVE_RUNTIME__ = { storageMode: "server", serverBase: "" }`.
+- When serving `app/index.html`, the server injects runtime config with `storageMode` from `ELENWEAVE_RUNTIME_MODE` (`server` by default).
 - Board and project IDs use 16-character URL-safe IDs.
 - The server uses lock files + atomic writes for multi-process safety.
 - In server mode, boards and assets are file-backed source-of-truth.
