@@ -49,6 +49,7 @@ const els = {
   toolsBody: document.getElementById('toolsBody'),
   importFile: document.getElementById('importFile'),
   btnNew: document.getElementById('btnNew'),
+  btnSortBoards: document.getElementById('btnSortBoards'),
   componentPicker: document.getElementById('componentPicker'),
   inputBar: document.getElementById('inputBar'),
   inputFields: document.getElementById('inputFields'),
@@ -85,9 +86,11 @@ const els = {
 const appShell = document.querySelector('.app-shell');
 const THEME_ORDER = ['light', 'dark', 'blueprint'];
 const EDGE_STYLE_ORDER = ['straight', 'curved'];
+const BOARD_SORT_ORDER = ['desc', 'asc'];
 const PANEL_STATE_KEY = 'elenweave_app_panel_collapsed';
 const HINT_STATE_KEY = 'elenweave_app_hint_collapsed';
 const EDGE_STYLE_KEY = 'elenweave_app_edge_style';
+const BOARD_SORT_KEY = 'elenweave_board_sort_order';
 const AI_PROVIDER_KEY = 'elenweave_ai_provider';
 const AI_KEY_PREFIX = 'elenweave_ai_key_';
 const AI_MODEL_PREFIX = 'elenweave_ai_model_';
@@ -715,6 +718,7 @@ let recordChunks = [];
 let projectIndex = [];
 let activeProjectId = null;
 let boardIndex = [];
+let boardSortOrder = loadBoardSortOrder();
 let activeBoardId = null;
 let isBoardSwitching = false;
 let projectSwitchSeq = 0;
@@ -759,6 +763,14 @@ initApp();
 els.btnNew.addEventListener('click', () => {
   const nextIndex = getActiveProjectBoards().length + 1;
   createBoard(`Board ${nextIndex}`);
+});
+
+els.btnSortBoards?.addEventListener('click', () => {
+  boardSortOrder = boardSortOrder === 'desc' ? 'asc' : 'desc';
+  saveBoardSortOrder(boardSortOrder);
+  updateBoardSortButton();
+  refreshBoardList();
+  setStatus(boardSortOrder === 'desc' ? 'Boards sorted by newest updated.' : 'Boards sorted by oldest updated.', 1200);
 });
 
 els.btnNewProject?.addEventListener('click', () => {
@@ -842,14 +854,14 @@ els.themeToggle.addEventListener('click', () => {
 els.panelToggle?.addEventListener('click', () => {
   if (!appShell) return;
   const collapsed = appShell.classList.toggle('is-collapsed');
-  els.panelToggle.textContent = collapsed ? 'Expand' : 'Collapse';
+  updatePanelToggleState(collapsed);
   saveCollapseState(PANEL_STATE_KEY, collapsed);
 });
 
 els.panelExpand?.addEventListener('click', () => {
   if (!appShell) return;
   appShell.classList.remove('is-collapsed');
-  if (els.panelToggle) els.panelToggle.textContent = 'Collapse';
+  updatePanelToggleState(false);
   saveCollapseState(PANEL_STATE_KEY, false);
 });
 
@@ -3310,7 +3322,7 @@ async function importBoardPayload(payload) {
 function refreshBoardList() {
   if (!els.boardList) return;
   els.boardList.innerHTML = '';
-  getActiveProjectBoards().forEach((board) => {
+  sortBoardsByTime(getActiveProjectBoards()).forEach((board) => {
     const btn = document.createElement('button');
     btn.className = `board-item${board.id === activeBoardId ? ' active' : ''}`;
     btn.type = 'button';
@@ -5694,6 +5706,35 @@ function saveEdgeStyle(style) {
   }
 }
 
+function loadBoardSortOrder() {
+  try {
+    const saved = localStorage.getItem(BOARD_SORT_KEY);
+    return BOARD_SORT_ORDER.includes(saved) ? saved : 'desc';
+  } catch (err) {
+    return 'desc';
+  }
+}
+
+function saveBoardSortOrder(order) {
+  try {
+    localStorage.setItem(BOARD_SORT_KEY, order);
+  } catch (err) {
+    return;
+  }
+}
+
+function sortBoardsByTime(boards) {
+  const rows = Array.isArray(boards) ? [...boards] : [];
+  const factor = boardSortOrder === 'asc' ? 1 : -1;
+  rows.sort((a, b) => {
+    const aTs = Number(a?.updatedAt || 0);
+    const bTs = Number(b?.updatedAt || 0);
+    if (aTs !== bTs) return (aTs - bTs) * factor;
+    return String(a?.name || '').localeCompare(String(b?.name || ''));
+  });
+  return rows;
+}
+
 function setEdgeStyle(style) {
   const next = EDGE_STYLE_ORDER.includes(style) ? style : 'straight';
   if (typeof view.setEdgeStyle === 'function') {
@@ -5736,13 +5777,32 @@ function restoreUiState() {
   const panelCollapsed = readCollapseState(PANEL_STATE_KEY);
   if (appShell && panelCollapsed) {
     appShell.classList.add('is-collapsed');
-    if (els.panelToggle) els.panelToggle.textContent = 'Expand';
   }
+  updatePanelToggleState(panelCollapsed);
+  updateBoardSortButton();
   const hintCollapsed = readCollapseState(HINT_STATE_KEY);
   if (els.hintCenter && hintCollapsed) {
     els.hintCenter.classList.add('is-collapsed');
   }
   setToolsExpanded(false);
+}
+
+function updatePanelToggleState(collapsed) {
+  if (!els.panelToggle) return;
+  const nextCollapsed = Boolean(collapsed);
+  els.panelToggle.setAttribute('aria-label', nextCollapsed ? 'Expand sidebar' : 'Collapse sidebar');
+  els.panelToggle.setAttribute('title', nextCollapsed ? 'Expand sidebar' : 'Collapse sidebar');
+  els.panelToggle.setAttribute('aria-pressed', nextCollapsed ? 'true' : 'false');
+}
+
+function updateBoardSortButton() {
+  if (!els.btnSortBoards) return;
+  const nextLabel = boardSortOrder === 'desc'
+    ? 'Sort boards by oldest updated time'
+    : 'Sort boards by newest updated time';
+  els.btnSortBoards.setAttribute('aria-label', nextLabel);
+  els.btnSortBoards.setAttribute('title', nextLabel);
+  els.btnSortBoards.setAttribute('data-order', boardSortOrder);
 }
 
 async function initApp() {

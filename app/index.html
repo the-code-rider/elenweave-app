@@ -34,12 +34,25 @@
   <body>
     <div class="app-shell">
       <aside class="app-panel">
-        <a class="app-brand" href="https://elenweave.com" aria-label="Elenweave home">
-          <img class="brand-mark" src="/logo.webp" alt="Elenweave logo" />
-          <div>
-            <h1>Elenweave</h1>
-          </div>
-        </a>
+        <div class="app-brand-row">
+          <a class="app-brand" href="https://elenweave.com" aria-label="Elenweave home">
+            <img class="brand-mark" src="/logo.webp" alt="Elenweave logo" />
+            <div>
+              <h1>Elenweave</h1>
+            </div>
+          </a>
+          <button
+            class="btn ghost collapse-btn"
+            id="panelToggle"
+            type="button"
+            aria-label="Collapse sidebar"
+            title="Collapse sidebar"
+            aria-pressed="false"
+          >
+            <span class="collapse-icon" aria-hidden="true"></span>
+            <span class="sr-only">Toggle sidebar</span>
+          </button>
+        </div>
 
         <section class="panel-section panel-section--projects">
           <div class="section-title">Projects</div>
@@ -55,9 +68,23 @@
 
         <section class="panel-section panel-section--boards">
           <div class="section-title">Boards</div>
-          <div class="btn-row">
-            <button class="btn accent" id="btnNew" type="button">New Board</button>
-            <button class="btn ghost collapse-btn" id="panelToggle" type="button">Collapse</button>
+          <div class="btn-row board-actions">
+            <button class="btn accent board-action-btn" id="btnNew" type="button" aria-label="New board" title="New board">
+              <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M8 3V13"></path>
+                <path d="M3 8H13"></path>
+              </svg>
+              <span class="sr-only">New board</span>
+            </button>
+            <button class="btn ghost board-action-btn" id="btnSortBoards" type="button" aria-label="Sort boards by time" title="Sort boards by newest updated time">
+              <svg class="btn-icon btn-icon-sort" viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="7" cy="8" r="4.2"></circle>
+                <path d="M7 5.9V8.4L8.8 9.6"></path>
+                <path d="M12 3.5V12.5"></path>
+                <path d="M10.9 11.4L12 12.5L13.1 11.4"></path>
+              </svg>
+              <span class="sr-only">Sort boards by time</span>
+            </button>
             <!-- <button class="btn" id="btnPrev" type="button">Prev</button> -->
             <!-- <button class="btn" id="btnNext" type="button">Next</button> -->
           </div>

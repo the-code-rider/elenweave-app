@@ -123,12 +123,21 @@ body {
     box-shadow: none;
 }
 
+.app-brand-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
 .app-brand {
     display: flex;
     align-items: center;
     gap: 12px;
     color: inherit;
     text-decoration: none;
+    min-width: 0;
+    flex: 1 1 auto;
 }
 
 .brand-mark {
@@ -165,7 +174,26 @@ body {
 }
 
 .collapse-btn {
-    min-width: 70px;
+    min-width: 34px;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+}
+
+.collapse-icon {
+    width: 10px;
+    height: 10px;
+    border-top: 2px solid currentColor;
+    border-right: 2px solid currentColor;
+    transform: rotate(-135deg);
+    transition: transform 120ms ease;
+}
+
+.app-shell.is-collapsed .collapse-icon {
+    transform: rotate(45deg);
 }
 
 .panel-section {
@@ -296,6 +324,39 @@ body {
     padding: 6px 10px;
     font-size: 0.72rem;
     letter-spacing: 0.08em;
+}
+
+.board-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.board-action-btn {
+    min-width: 34px;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+}
+
+.board-action-btn .btn-icon {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+#btnSortBoards .btn-icon-sort {
+    transition: transform 120ms ease;
+}
+
+#btnSortBoards[data-order="asc"] .btn-icon-sort {
+    transform: rotate(180deg);
 }
 
 .panel-section--tools {
@@ -747,12 +808,31 @@ html:not([data-theme="light"]) .board-item:hover {
 }
 
 html:not([data-theme="light"]) .board-item.active {
-    transform: translateY(1px);
+    border-color: color-mix(in oklab, var(--app-accent) 84%, #ffffff 16%);
+    background: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--app-panel) 58%, var(--app-accent) 42%),
+        color-mix(in oklab, var(--app-panel) 74%, var(--app-accent) 30%)
+    );
+    color: color-mix(in oklab, #ffffff 88%, var(--app-accent) 12%);
+    transform: translateY(0);
     box-shadow:
+        0 0 0 2px color-mix(in oklab, var(--app-accent) 52%, transparent),
         inset 0 2px 3px rgba(0, 0, 0, 0.45),
         inset 0 1px 0 rgba(255, 255, 255, 0.1),
         inset 0 -1px 0 rgba(255, 255, 255, 0.08),
         0 8px 14px rgba(0, 0, 0, 0.3);
+}
+
+html:not([data-theme="light"]) .board-item.active::before {
+    opacity: 0.3;
+}
+
+html:not([data-theme="light"]) .board-item.active::after {
+    box-shadow:
+        inset 3px 0 0 color-mix(in oklab, var(--app-accent) 78%, #ffffff 22%),
+        inset 1px 1px 0 rgba(255, 255, 255, 0.18),
+        inset -1px -1px 0 rgba(0, 0, 0, 0.42);
 }
 
 .board-item.editing {

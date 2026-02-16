@@ -16,7 +16,6 @@
   "files": [
     "app",
     "!app/favicons",
-    "!app/logo.webp",
     "!app/logo.png",
     "!app/favicon.ico",
     "!app/favicon-*.png",
