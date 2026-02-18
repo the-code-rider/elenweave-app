@@ -284,6 +284,16 @@ body {
     outline-offset: 1px;
 }
 
+#projectSelect option {
+    background: #15202c;
+    color: #e8edf3;
+}
+
+html[data-theme="light"] #projectSelect option {
+    background: #ffffff;
+    color: #11161c;
+}
+
 .project-rename-input {
     width: 100%;
     appearance: none;
@@ -419,6 +429,56 @@ body {
 
 .settings-panel__group:last-child {
     margin-bottom: 0;
+}
+
+.desktop-settings[hidden] {
+    display: none;
+}
+
+.desktop-runtime {
+    font-size: 0.62rem;
+    line-height: 1.45;
+    color: var(--app-muted);
+    border: 1px solid color-mix(in oklab, var(--app-border) 70%, transparent);
+    border-radius: 10px;
+    padding: 8px 9px;
+    background: color-mix(in oklab, var(--app-panel) 84%, transparent);
+    margin-bottom: 2px;
+}
+
+.desktop-field {
+    display: grid;
+    gap: 4px;
+    font-size: 0.58rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--app-muted);
+}
+
+.desktop-field input {
+    min-height: 30px;
+    border-radius: 8px;
+    border: 1px solid color-mix(in oklab, var(--app-border) 70%, rgba(255, 255, 255, 0.12));
+    background: color-mix(in oklab, var(--app-panel) 78%, rgba(0, 0, 0, 0.08));
+    color: var(--app-text);
+    padding: 6px 9px;
+    font-size: 0.68rem;
+    letter-spacing: 0.02em;
+}
+
+.desktop-field input:focus {
+    outline: 2px solid color-mix(in oklab, var(--app-accent) 60%, transparent);
+    outline-offset: 1px;
+}
+
+html[data-theme="light"] .desktop-runtime {
+    background: color-mix(in oklab, #ffffff 88%, var(--app-panel) 12%);
+    border-color: color-mix(in oklab, var(--app-border) 62%, rgba(255, 255, 255, 0.8));
+}
+
+html[data-theme="light"] .desktop-field input {
+    background: color-mix(in oklab, #ffffff 90%, var(--app-panel) 10%);
+    border-color: color-mix(in oklab, var(--app-border) 58%, rgba(255, 255, 255, 0.82));
 }
 
 .panel-footer {

@@ -1,0 +1,5 @@
+{
+  "name": "elenweave-desktop-runtime",
+  "private": true,
+  "type": "module"
+}

@@ -1,0 +1,12 @@
+{
+  "port": 8787,
+  "maxPort": 8899,
+  "mode": "server",
+  "dataDir": "C:\\Users\\you\\.elenweave",
+  "configPath": "C:\\Users\\you\\.elenweave\\config.json",
+  "aiConfigPath": "",
+  "envOverrides": {
+    "ELENWEAVE_OPENAI_MODEL": "gpt-5-mini",
+    "ELENWEAVE_GEMINI_MODEL": "gemini-3-flash-preview"
+  }
+}

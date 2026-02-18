@@ -8,3 +8,6 @@ logo.png
 notes.md
 notes.txt
 server/ai.config.example.json
+desktop/node_modules/
+desktop/release/
+desktop/dist/

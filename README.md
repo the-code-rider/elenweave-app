@@ -132,6 +132,49 @@ If startup fails with `EADDRINUSE` on `127.0.0.1:8787`, either stop the process 
 npm run server:cli -- --port 8788
 ```
 
+## Desktop App (Electron, Experimental)
+
+Run from this repo:
+
+```bash
+npm run desktop:install
+npm run desktop:dev
+```
+
+Build Windows installer:
+
+```bash
+npm run desktop:build:win
+```
+
+Desktop runtime behavior:
+
+- Starts local Elenweave server (`server/cli.js`) automatically
+- Opens app at `http://127.0.0.1:<port>/app/index.html`
+- Exposes localhost API for coding agents at `http://127.0.0.1:<port>/api/*`
+- If preferred port is busy, falls forward to next free port up to `maxPort`
+
+Desktop config file:
+
+- Path: `%APPDATA%\\Elenweave\\config.json`
+- Created automatically on first run
+- Example shape: `desktop/config.example.json`
+
+Supported desktop config keys:
+
+- `port`: preferred start port (default `8787`)
+- `maxPort`: upper bound for fallback scan (default `8899`)
+- `mode`: runtime mode (`server` default)
+- `dataDir`: server storage root (default `~/.elenweave`)
+- `configPath`: path to app/AI config JSON (maps to `ELENWEAVE_CONFIG`)
+- `aiConfigPath`: optional dedicated AI config JSON (maps to `ELENWEAVE_AI_CONFIG`)
+- `envOverrides`: additional env vars passed to local server process
+
+Desktop-only in-app settings panel:
+
+- Open `Settings` in the sidebar
+- Use the `Desktop` section to view runtime info, edit `port/dataDir/configPath/aiConfigPath`, save config, and restart server
+
 ## Optional: Local AI Proxy
 
 When running the local server, AI keys can be loaded from environment variables or config file so browser requests are served through local `/api/ai/*` endpoints.

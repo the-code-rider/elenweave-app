@@ -83,10 +83,23 @@ const els = {
   apiKeyNote: document.getElementById('apiKeyNote'),
   modelInput: document.getElementById('modelInput'),
   modelNote: document.getElementById('modelNote'),
-  btnRealtime: document.getElementById('btnRealtime')
+  btnRealtime: document.getElementById('btnRealtime'),
+  desktopSettingsGroup: document.getElementById('desktopSettingsGroup'),
+  desktopRuntimeInfo: document.getElementById('desktopRuntimeInfo'),
+  desktopPortInput: document.getElementById('desktopPortInput'),
+  desktopDataDirInput: document.getElementById('desktopDataDirInput'),
+  desktopConfigPathInput: document.getElementById('desktopConfigPathInput'),
+  desktopAiConfigPathInput: document.getElementById('desktopAiConfigPathInput'),
+  desktopSaveConfig: document.getElementById('desktopSaveConfig'),
+  desktopRestartServer: document.getElementById('desktopRestartServer'),
+  desktopOpenDataDir: document.getElementById('desktopOpenDataDir'),
+  desktopOpenConfigFile: document.getElementById('desktopOpenConfigFile')
 };
 
 const appShell = document.querySelector('.app-shell');
+const DESKTOP_BRIDGE = window.elenweaveDesktop && typeof window.elenweaveDesktop === 'object'
+  ? window.elenweaveDesktop
+  : null;
 const THEME_ORDER = ['light', 'dark', 'blueprint'];
 const EDGE_STYLE_ORDER = ['straight', 'curved'];
 const BOARD_SORT_ORDER = ['desc', 'asc'];
@@ -423,6 +436,8 @@ let handControls = null;
 let handControlsBusy = false;
 let handControlsEnabled = false;
 let lastSelectedNodeEl = null;
+let desktopRuntimeInfo = null;
+let desktopSettingsBusy = false;
 let nodeContextMenu = {
   el: null,
   nodeId: null,
@@ -909,6 +924,18 @@ els.settingsToggle?.addEventListener('click', () => {
 
 els.settingsClose?.addEventListener('click', () => {
   setSettingsPanelOpen(false);
+});
+els.desktopSaveConfig?.addEventListener('click', () => {
+  void saveDesktopSettings();
+});
+els.desktopRestartServer?.addEventListener('click', () => {
+  void restartDesktopServerFromPanel();
+});
+els.desktopOpenDataDir?.addEventListener('click', () => {
+  void openDesktopDataDirFromPanel();
+});
+els.desktopOpenConfigFile?.addEventListener('click', () => {
+  void openDesktopConfigFileFromPanel();
 });
 
 els.hintToggle?.addEventListener('click', () => {
@@ -6009,6 +6036,175 @@ function updateHandControlsButton() {
     : 'Enable camera hand controls';
 }
 
+function isDesktopBridgeAvailable() {
+  return Boolean(DESKTOP_BRIDGE && typeof DESKTOP_BRIDGE.getRuntimeInfo === 'function');
+}
+
+function setDesktopPanelStatus(text) {
+  if (!els.desktopRuntimeInfo) return;
+  els.desktopRuntimeInfo.textContent = String(text || 'Desktop runtime unavailable.');
+}
+
+function setDesktopSettingsBusy(busy) {
+  desktopSettingsBusy = Boolean(busy);
+  const disabled = desktopSettingsBusy || !isDesktopBridgeAvailable();
+  [
+    els.desktopPortInput,
+    els.desktopDataDirInput,
+    els.desktopConfigPathInput,
+    els.desktopAiConfigPathInput,
+    els.desktopSaveConfig,
+    els.desktopRestartServer,
+    els.desktopOpenDataDir,
+    els.desktopOpenConfigFile
+  ].forEach((el) => {
+    if (!el) return;
+    el.disabled = disabled;
+  });
+}
+
+function updateDesktopSettingsFields(config = {}, runtime = {}) {
+  if (els.desktopPortInput) {
+    const port = Number(config?.port || runtime?.port || 8787);
+    els.desktopPortInput.value = Number.isFinite(port) ? String(port) : '';
+  }
+  if (els.desktopDataDirInput) {
+    els.desktopDataDirInput.value = String(config?.dataDir || runtime?.dataDir || '');
+  }
+  if (els.desktopConfigPathInput) {
+    els.desktopConfigPathInput.value = String(config?.configPath || '');
+  }
+  if (els.desktopAiConfigPathInput) {
+    els.desktopAiConfigPathInput.value = String(config?.aiConfigPath || '');
+  }
+}
+
+function formatDesktopRuntimeText(runtime = {}) {
+  const apiBase = String(runtime?.apiBase || '');
+  const mode = String(runtime?.mode || 'server');
+  const dataDir = String(runtime?.dataDir || '');
+  const pid = runtime?.serverPid;
+  const parts = [];
+  if (apiBase) parts.push(`API: ${apiBase}`);
+  parts.push(`Mode: ${mode}`);
+  if (dataDir) parts.push(`Data: ${dataDir}`);
+  parts.push(`PID: ${pid || 'n/a'}`);
+  return parts.join(' | ');
+}
+
+async function loadDesktopSettingsSnapshot() {
+  if (!isDesktopBridgeAvailable()) return null;
+  const runtime = await DESKTOP_BRIDGE.getRuntimeInfo();
+  const config = typeof DESKTOP_BRIDGE.getConfig === 'function'
+    ? await DESKTOP_BRIDGE.getConfig()
+    : {};
+  return { runtime, config };
+}
+
+async function refreshDesktopSettingsPanel() {
+  if (!isDesktopBridgeAvailable()) return;
+  const snapshot = await loadDesktopSettingsSnapshot();
+  if (!snapshot) return;
+  desktopRuntimeInfo = snapshot.runtime || null;
+  updateDesktopSettingsFields(snapshot.config, snapshot.runtime);
+  setDesktopPanelStatus(formatDesktopRuntimeText(snapshot.runtime));
+}
+
+async function initDesktopSettingsPanel() {
+  if (!els.desktopSettingsGroup) return;
+  if (!isDesktopBridgeAvailable()) {
+    els.desktopSettingsGroup.hidden = true;
+    setDesktopPanelStatus('Desktop runtime unavailable.');
+    return;
+  }
+  els.desktopSettingsGroup.hidden = false;
+  setDesktopSettingsBusy(true);
+  try {
+    await refreshDesktopSettingsPanel();
+  } catch (err) {
+    setDesktopPanelStatus(`Desktop settings unavailable: ${err?.message || 'unknown error'}.`);
+  } finally {
+    setDesktopSettingsBusy(false);
+  }
+}
+
+function readDesktopPanelInputValues() {
+  const values = {};
+  const rawPort = String(els.desktopPortInput?.value || '').trim();
+  if (rawPort) {
+    const port = Number.parseInt(rawPort, 10);
+    if (!Number.isFinite(port) || port < 1 || port > 65535) {
+      throw new Error('Port must be between 1 and 65535.');
+    }
+    values.port = port;
+  }
+  values.dataDir = String(els.desktopDataDirInput?.value || '').trim();
+  values.configPath = String(els.desktopConfigPathInput?.value || '').trim();
+  values.aiConfigPath = String(els.desktopAiConfigPathInput?.value || '').trim();
+  return values;
+}
+
+async function saveDesktopSettings() {
+  if (!isDesktopBridgeAvailable()) return;
+  if (typeof DESKTOP_BRIDGE.updateConfig !== 'function') {
+    setStatus('Desktop settings update is not available in this runtime.', 1800);
+    return;
+  }
+  if (desktopSettingsBusy) return;
+  setDesktopSettingsBusy(true);
+  try {
+    const payload = readDesktopPanelInputValues();
+    await DESKTOP_BRIDGE.updateConfig(payload);
+    await refreshDesktopSettingsPanel();
+    setStatus('Desktop config saved. Restart server to apply changes.', 1800);
+  } catch (err) {
+    setStatus(`Failed to save desktop config: ${err?.message || 'unknown error'}.`, 2400);
+  } finally {
+    setDesktopSettingsBusy(false);
+  }
+}
+
+async function restartDesktopServerFromPanel() {
+  if (!isDesktopBridgeAvailable()) return;
+  if (desktopSettingsBusy) return;
+  setDesktopSettingsBusy(true);
+  try {
+    if (typeof DESKTOP_BRIDGE.restartServer !== 'function') {
+      throw new Error('Restart API unavailable.');
+    }
+    const runtime = await DESKTOP_BRIDGE.restartServer();
+    desktopRuntimeInfo = runtime || null;
+    setDesktopPanelStatus(formatDesktopRuntimeText(runtime));
+    setStatus('Desktop server restarted.', 1500);
+  } catch (err) {
+    setStatus(`Failed to restart desktop server: ${err?.message || 'unknown error'}.`, 2400);
+  } finally {
+    setDesktopSettingsBusy(false);
+  }
+}
+
+async function openDesktopDataDirFromPanel() {
+  if (!isDesktopBridgeAvailable()) return;
+  try {
+    await DESKTOP_BRIDGE.openDataDir?.();
+  } catch (err) {
+    setStatus(`Failed to open data directory: ${err?.message || 'unknown error'}.`, 2200);
+  }
+}
+
+async function openDesktopConfigFileFromPanel() {
+  if (!isDesktopBridgeAvailable()) return;
+  try {
+    if (typeof DESKTOP_BRIDGE.openDesktopConfig === 'function') {
+      await DESKTOP_BRIDGE.openDesktopConfig();
+      return;
+    }
+    await DESKTOP_BRIDGE.openConfigFile?.();
+  } catch (err) {
+    setStatus(`Failed to open desktop config: ${err?.message || 'unknown error'}.`, 2200);
+  }
+}
+
 async function initApp() {
   const useServer = await ensureServerMode();
   const restored = await restoreWorkspace();
@@ -6030,6 +6226,7 @@ async function initApp() {
   syncApiKeyInput();
   initRealtime();
   restoreUiState();
+  await initDesktopSettingsPanel();
   await initHandControls();
   if (!restored && useServer) {
     setStatus('Server storage mode requires a live API. Could not load /api/projects.', 0);

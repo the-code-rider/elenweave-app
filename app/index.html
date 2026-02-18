@@ -126,6 +126,34 @@
               <button class="btn ghost" id="btnImport" type="button">Import Board</button>
             </div>
           </div>
+          <div class="settings-panel__group desktop-settings" id="desktopSettingsGroup" hidden>
+            <div class="section-title">Desktop</div>
+            <div class="desktop-runtime" id="desktopRuntimeInfo">Desktop runtime unavailable.</div>
+            <label class="desktop-field" for="desktopPortInput">
+              <span>Port</span>
+              <input id="desktopPortInput" type="number" min="1" max="65535" step="1" placeholder="8787" />
+            </label>
+            <label class="desktop-field" for="desktopDataDirInput">
+              <span>Data Directory</span>
+              <input id="desktopDataDirInput" type="text" placeholder="C:\\Users\\you\\.elenweave" />
+            </label>
+            <label class="desktop-field" for="desktopConfigPathInput">
+              <span>Config Path</span>
+              <input id="desktopConfigPathInput" type="text" placeholder="C:\\Users\\you\\.elenweave\\config.json" />
+            </label>
+            <label class="desktop-field" for="desktopAiConfigPathInput">
+              <span>AI Config Path</span>
+              <input id="desktopAiConfigPathInput" type="text" placeholder="Optional" />
+            </label>
+            <div class="btn-row">
+              <button class="btn" id="desktopSaveConfig" type="button">Save Desktop Config</button>
+              <button class="btn ghost" id="desktopRestartServer" type="button">Restart Server</button>
+            </div>
+            <div class="btn-row">
+              <button class="btn ghost" id="desktopOpenDataDir" type="button">Open Data Dir</button>
+              <button class="btn ghost" id="desktopOpenConfigFile" type="button">Open Config File</button>
+            </div>
+          </div>
         </section>
 
         <div class="panel-footer">
