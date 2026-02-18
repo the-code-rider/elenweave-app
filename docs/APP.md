@@ -31,6 +31,7 @@ The app is an Elenweave workspace with optional local server persistence.
   - Manages **project list**, **board list**, switching, import/export.
   - Handles AI prompt flow, attachments, node creation, and layout.
   - Handles UI state persistence and notifications.
+  - Wires optional experimental hand controls (MediaPipe) via isolated module.
   - Uses `window.__ELENWEAVE_RUNTIME__` to select strict storage mode at boot.
 
 ### Custom components
@@ -38,6 +39,8 @@ The app is an Elenweave workspace with optional local server persistence.
 - `app/markdown-block.js`
 - `app/svg-block.js`
 - `app/mermaid-block.js`
+- `app/hand_controls.js`
+  - Optional camera-driven hand gesture input layer (pinch zoom, pan, node grab/move).
 
 ### AI + realtime
 

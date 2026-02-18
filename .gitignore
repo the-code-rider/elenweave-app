@@ -1,2 +1,10 @@
 config.json
 server/config.json
+
+.agents/
+action-logs.txt
+data-test/
+logo.png
+notes.md
+notes.txt
+server/ai.config.example.json

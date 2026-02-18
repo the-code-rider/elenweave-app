@@ -27,6 +27,7 @@ import {
   callGeminiMultimodal
 } from './llm_clients.js';
 import { createRealtimeAgent } from './realtime_audio.js';
+import { createHandControls } from './hand_controls.js';
 
 const { ElenweaveWorkspace, ElenweaveView, ElenweaveNavigator } = window.Elenweave || {};
 if (!ElenweaveWorkspace || !ElenweaveView) {
@@ -45,8 +46,9 @@ const els = {
   btnLink: document.getElementById('btnLink'),
   btnExport: document.getElementById('btnExport'),
   btnImport: document.getElementById('btnImport'),
-  toolsToggle: document.getElementById('toolsToggle'),
-  toolsBody: document.getElementById('toolsBody'),
+  settingsToggle: document.getElementById('settingsToggle'),
+  settingsPanel: document.getElementById('settingsPanel'),
+  settingsClose: document.getElementById('settingsClose'),
   importFile: document.getElementById('importFile'),
   btnNew: document.getElementById('btnNew'),
   btnSortBoards: document.getElementById('btnSortBoards'),
@@ -66,6 +68,7 @@ const els = {
   status: document.getElementById('status'),
   themeToggle: document.getElementById('themeToggle'),
   edgeToggle: document.getElementById('edgeToggle'),
+  btnHandControls: document.getElementById('btnHandControls'),
   panelToggle: document.getElementById('panelToggle'),
   panelExpand: document.getElementById('panelExpand'),
   hintCenter: document.getElementById('hintCenter'),
@@ -91,6 +94,7 @@ const PANEL_STATE_KEY = 'elenweave_app_panel_collapsed';
 const HINT_STATE_KEY = 'elenweave_app_hint_collapsed';
 const EDGE_STYLE_KEY = 'elenweave_app_edge_style';
 const BOARD_SORT_KEY = 'elenweave_board_sort_order';
+const HAND_CONTROLS_STATE_KEY = 'elenweave_hand_controls_enabled';
 const AI_PROVIDER_KEY = 'elenweave_ai_provider';
 const AI_KEY_PREFIX = 'elenweave_ai_key_';
 const AI_MODEL_PREFIX = 'elenweave_ai_model_';
@@ -120,7 +124,9 @@ const RUNTIME_CONFIG = (() => {
         serverBase: '',
         seedReadOnlyMode: 'off',
         seedReadOnlyProjectIds: [],
-        readOnlyFork: 'local'
+        readOnlyFork: 'local',
+        experimentalHandControls: true,
+        handControlsModelBaseUrl: ''
       };
     }
     const storageMode = raw.storageMode === 'server' ? 'server' : 'client';
@@ -134,12 +140,18 @@ const RUNTIME_CONFIG = (() => {
       ? raw.seedReadOnlyProjectIds.map((id) => String(id || '').trim()).filter(Boolean)
       : [];
     const readOnlyFork = raw.readOnlyFork === 'off' ? 'off' : 'local';
+    const experimentalHandControls = raw.experimentalHandControls !== false;
+    const handControlsModelBaseUrl = typeof raw.handControlsModelBaseUrl === 'string'
+      ? raw.handControlsModelBaseUrl.trim()
+      : '';
     return {
       storageMode,
       serverBase,
       seedReadOnlyMode,
       seedReadOnlyProjectIds,
-      readOnlyFork
+      readOnlyFork,
+      experimentalHandControls,
+      handControlsModelBaseUrl
     };
   } catch (err) {
     return {
@@ -147,7 +159,9 @@ const RUNTIME_CONFIG = (() => {
       serverBase: '',
       seedReadOnlyMode: 'off',
       seedReadOnlyProjectIds: [],
-      readOnlyFork: 'local'
+      readOnlyFork: 'local',
+      experimentalHandControls: true,
+      handControlsModelBaseUrl: ''
     };
   }
 })();
@@ -156,6 +170,20 @@ const IS_SERVER_MODE = RUNTIME_CONFIG.storageMode === 'server';
 const SEED_READ_ONLY_MODE = RUNTIME_CONFIG.seedReadOnlyMode || 'off';
 const SEED_READ_ONLY_PROJECTS = new Set(RUNTIME_CONFIG.seedReadOnlyProjectIds || []);
 const READ_ONLY_FORK_MODE = RUNTIME_CONFIG.readOnlyFork || 'local';
+const HAND_CONTROLS_MODEL_BASE_URL = RUNTIME_CONFIG.handControlsModelBaseUrl || '';
+const HAND_CONTROLS_QUERY = (() => {
+  try {
+    const raw = new URLSearchParams(window.location.search).get('hand');
+    if (!raw) return '';
+    const value = raw.trim().toLowerCase();
+    if (value === '1' || value === 'true' || value === 'on') return 'on';
+    if (value === '0' || value === 'false' || value === 'off') return 'off';
+    return '';
+  } catch (err) {
+    return '';
+  }
+})();
+const HAND_CONTROLS_AVAILABLE = RUNTIME_CONFIG.experimentalHandControls !== false && HAND_CONTROLS_QUERY !== 'off';
 
 const workspace = new ElenweaveWorkspace();
 const view = new ElenweaveView({
@@ -391,6 +419,9 @@ let navFocusArmed = false;
 let navFocusTimer = null;
 let serverAiProviders = new Set();
 let serverAiDefaultModels = new Map();
+let handControls = null;
+let handControlsBusy = false;
+let handControlsEnabled = false;
 let nodeContextMenu = {
   el: null,
   nodeId: null,
@@ -768,9 +799,14 @@ els.btnNew.addEventListener('click', () => {
 els.btnSortBoards?.addEventListener('click', () => {
   boardSortOrder = boardSortOrder === 'desc' ? 'asc' : 'desc';
   saveBoardSortOrder(boardSortOrder);
+  sortActiveProjectBoardsByTime(boardSortOrder);
   updateBoardSortButton();
   refreshBoardList();
   setStatus(boardSortOrder === 'desc' ? 'Boards sorted by newest updated.' : 'Boards sorted by oldest updated.', 1200);
+});
+
+els.btnHandControls?.addEventListener('click', async () => {
+  await setHandControlsEnabled(!handControlsEnabled, { persist: true });
 });
 
 els.btnNewProject?.addEventListener('click', () => {
@@ -865,9 +901,13 @@ els.panelExpand?.addEventListener('click', () => {
   saveCollapseState(PANEL_STATE_KEY, false);
 });
 
-els.toolsToggle?.addEventListener('click', () => {
-  const expanded = els.toolsToggle?.getAttribute('aria-expanded') === 'true';
-  setToolsExpanded(!expanded);
+els.settingsToggle?.addEventListener('click', () => {
+  const expanded = els.settingsToggle?.getAttribute('aria-expanded') === 'true';
+  setSettingsPanelOpen(!expanded);
+});
+
+els.settingsClose?.addEventListener('click', () => {
+  setSettingsPanelOpen(false);
 });
 
 els.hintToggle?.addEventListener('click', () => {
@@ -892,7 +932,15 @@ window.addEventListener('keydown', (event) => {
 });
 window.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
+  setSettingsPanelOpen(false);
+});
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
   closeNodeContextMenu();
+});
+window.addEventListener('beforeunload', () => {
+  if (!handControls) return;
+  handControls.destroy();
 });
 window.addEventListener('keydown', (event) => {
   if (isEditableElement(event.target)) return;
@@ -3322,7 +3370,7 @@ async function importBoardPayload(payload) {
 function refreshBoardList() {
   if (!els.boardList) return;
   els.boardList.innerHTML = '';
-  sortBoardsByTime(getActiveProjectBoards()).forEach((board) => {
+  getActiveProjectBoards().forEach((board) => {
     const btn = document.createElement('button');
     btn.className = `board-item${board.id === activeBoardId ? ' active' : ''}`;
     btn.type = 'button';
@@ -5723,6 +5771,99 @@ function saveBoardSortOrder(order) {
   }
 }
 
+function loadHandControlsPreference() {
+  if (HAND_CONTROLS_QUERY === 'on') return true;
+  try {
+    return localStorage.getItem(HAND_CONTROLS_STATE_KEY) === 'true';
+  } catch (err) {
+    return false;
+  }
+}
+
+function saveHandControlsPreference(enabled) {
+  try {
+    localStorage.setItem(HAND_CONTROLS_STATE_KEY, enabled ? 'true' : 'false');
+  } catch (err) {
+    return;
+  }
+}
+
+async function ensureHandControlsController() {
+  if (handControls) return handControls;
+  handControls = createHandControls({
+    view,
+    canvasShell,
+    setStatus,
+    options: {
+      modelBaseUrl: HAND_CONTROLS_MODEL_BASE_URL || '',
+      onStateChange: (active) => {
+        handControlsEnabled = Boolean(active);
+        if (!handControlsEnabled && !handControlsBusy) {
+          saveHandControlsPreference(false);
+        }
+        updateHandControlsButton();
+      }
+    }
+  });
+  return handControls;
+}
+
+async function setHandControlsEnabled(enabled, options = {}) {
+  const persist = options.persist !== false;
+  const target = Boolean(enabled);
+  if (!HAND_CONTROLS_AVAILABLE) {
+    handControlsEnabled = false;
+    if (persist) saveHandControlsPreference(false);
+    updateHandControlsButton();
+    setStatus('Hand controls are disabled by runtime config.', 1800);
+    return false;
+  }
+  if (handControlsBusy) return handControlsEnabled;
+  if (target === handControlsEnabled) {
+    updateHandControlsButton();
+    return handControlsEnabled;
+  }
+  handControlsBusy = true;
+  updateHandControlsButton();
+  try {
+    if (target) {
+      const controller = await ensureHandControlsController();
+      await controller.enable();
+      handControlsEnabled = true;
+      setStatus('Hand controls enabled (experimental).', 1800);
+    } else {
+      if (handControls) await handControls.disable();
+      handControlsEnabled = false;
+      setStatus('Hand controls disabled.', 1200);
+    }
+    if (persist) saveHandControlsPreference(handControlsEnabled);
+  } catch (err) {
+    console.warn('Hand controls toggle failed', err);
+    if (handControls) {
+      try {
+        await handControls.disable();
+      } catch (disableErr) {
+        console.warn('Hand controls disable failed', disableErr);
+      }
+    }
+    handControlsEnabled = false;
+    if (persist) saveHandControlsPreference(false);
+    setStatus(`Hand controls unavailable: ${err?.message || 'failed to initialize'}.`, 2600);
+  } finally {
+    handControlsBusy = false;
+    updateHandControlsButton();
+  }
+  return handControlsEnabled;
+}
+
+async function initHandControls() {
+  updateHandControlsButton();
+  if (!HAND_CONTROLS_AVAILABLE) return;
+  const shouldEnable = loadHandControlsPreference();
+  if (!shouldEnable) return;
+  await setHandControlsEnabled(true, { persist: false });
+}
+
 function sortBoardsByTime(boards) {
   const rows = Array.isArray(boards) ? [...boards] : [];
   const factor = boardSortOrder === 'asc' ? 1 : -1;
@@ -5733,6 +5874,25 @@ function sortBoardsByTime(boards) {
     return String(a?.name || '').localeCompare(String(b?.name || ''));
   });
   return rows;
+}
+
+function sortActiveProjectBoardsByTime(order = boardSortOrder) {
+  const projectId = boardScopeProjectId(activeProjectId);
+  const rows = getBoardsForProject(projectId);
+  if (rows.length < 2) return;
+  const factor = order === 'asc' ? 1 : -1;
+  const sortedRows = [...rows].sort((a, b) => {
+    const aTs = Number(a?.updatedAt || 0);
+    const bTs = Number(b?.updatedAt || 0);
+    if (aTs !== bTs) return (aTs - bTs) * factor;
+    return String(a?.name || '').localeCompare(String(b?.name || ''));
+  });
+  const queue = [...sortedRows];
+  boardIndex = boardIndex.map((entry) => (
+    (entry?.projectId || null) === (projectId || null)
+      ? queue.shift()
+      : entry
+  ));
 }
 
 function setEdgeStyle(style) {
@@ -5762,14 +5922,15 @@ function updateEdgeToggle() {
   els.edgeToggle.classList.toggle('active', style === 'curved');
 }
 
-function setToolsExpanded(expanded) {
-  const isExpanded = Boolean(expanded);
-  if (els.toolsBody) {
-    els.toolsBody.hidden = !isExpanded;
+function setSettingsPanelOpen(open) {
+  const isOpen = Boolean(open);
+  if (els.settingsPanel) {
+    els.settingsPanel.hidden = !isOpen;
+    els.settingsPanel.classList.toggle('is-open', isOpen);
   }
-  if (els.toolsToggle) {
-    els.toolsToggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
-    els.toolsToggle.classList.toggle('active', isExpanded);
+  if (els.settingsToggle) {
+    els.settingsToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    els.settingsToggle.classList.toggle('active', isOpen);
   }
 }
 
@@ -5784,7 +5945,7 @@ function restoreUiState() {
   if (els.hintCenter && hintCollapsed) {
     els.hintCenter.classList.add('is-collapsed');
   }
-  setToolsExpanded(false);
+  setSettingsPanelOpen(false);
 }
 
 function updatePanelToggleState(collapsed) {
@@ -5803,6 +5964,30 @@ function updateBoardSortButton() {
   els.btnSortBoards.setAttribute('aria-label', nextLabel);
   els.btnSortBoards.setAttribute('title', nextLabel);
   els.btnSortBoards.setAttribute('data-order', boardSortOrder);
+}
+
+function updateHandControlsButton() {
+  if (!els.btnHandControls) return;
+  if (!HAND_CONTROLS_AVAILABLE) {
+    els.btnHandControls.disabled = true;
+    els.btnHandControls.classList.remove('is-live');
+    els.btnHandControls.textContent = 'Hand Controls: Disabled';
+    els.btnHandControls.title = 'Disabled by runtime config or URL flag.';
+    return;
+  }
+  els.btnHandControls.disabled = handControlsBusy;
+  els.btnHandControls.classList.toggle('is-live', handControlsEnabled);
+  if (handControlsBusy) {
+    els.btnHandControls.textContent = 'Hand Controls: Starting...';
+    els.btnHandControls.title = 'Starting hand controls.';
+    return;
+  }
+  els.btnHandControls.textContent = handControlsEnabled
+    ? 'Hand Controls: On (exp)'
+    : 'Hand Controls: Off (exp)';
+  els.btnHandControls.title = handControlsEnabled
+    ? 'Disable camera hand controls'
+    : 'Enable camera hand controls';
 }
 
 async function initApp() {
@@ -5826,6 +6011,7 @@ async function initApp() {
   syncApiKeyInput();
   initRealtime();
   restoreUiState();
+  await initHandControls();
   if (!restored && useServer) {
     setStatus('Server storage mode requires a live API. Could not load /api/projects.', 0);
     return;

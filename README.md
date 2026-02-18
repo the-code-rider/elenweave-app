@@ -158,11 +158,21 @@ Accepted params:
 | `seedReadOnlyMode` | `'off' \| 'all' \| 'projects'` | No | Hosted seed read-only mode injected by server. |
 | `seedReadOnlyProjectIds` | `string[]` | No | Read-only project IDs when `seedReadOnlyMode='projects'`. |
 | `readOnlyFork` | `'off' \| 'local'` | No | Read-only edit behavior (`local` = browser IndexedDB fork). |
+| `experimentalHandControls` | `boolean` | No | Enable/disable MediaPipe hand-controls feature availability at runtime. |
+| `handControlsModelBaseUrl` | `string` | No | Optional base URL for `hand_landmarker.task` (defaults to hosted MediaPipe model). |
 
 Mode behavior:
 
 - `storageMode: "server"`: app uses `/api/projects/*` and file-backed server storage.
 - `storageMode: "client"`: app uses browser IndexedDB only and does not call server APIs.
+
+### Experimental Hand Controls
+
+- Toggle from `Tools` -> `Hand Controls` (`Off/On (exp)`).
+- Feature is off by default and does not change existing mouse/keyboard/touch controls.
+- When enabled, browser camera access is required; disabling stops the camera stream immediately.
+- URL kill switch: append `?hand=off` to force-disable for that session URL.
+- URL force-enable: append `?hand=on` to auto-enable at startup.
 
 ### App/AI Config File (`config.json`)
 
@@ -214,6 +224,8 @@ Accepted params:
 | `ELENWEAVE_SEED_VERSION` | _(unset)_ | Seed version used with `versioned` policy |
 | `ELENWEAVE_SEED_READONLY` | `off` | Seed read-only mode: `off`, `all`, `projects` |
 | `ELENWEAVE_READONLY_FORK` | `local` | Read-only fork behavior: `local` or `off` |
+| `ELENWEAVE_EXPERIMENTAL_HAND_CONTROLS` | `true` | Enable or disable MediaPipe hand-controls runtime toggle |
+| `ELENWEAVE_HAND_CONTROLS_MODEL_BASE_URL` | _(unset)_ | Optional base URL containing `hand_landmarker.task` |
 | `ELENWEAVE_CONFIG` | _(unset)_ | Path to app/AI config JSON |
 | `ELENWEAVE_AI_CONFIG` | _(unset)_ | Path to AI config JSON |
 | `ELENWEAVE_OPENAI_API_KEY` | _(unset)_ | Preferred OpenAI key env var |

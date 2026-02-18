@@ -32,12 +32,14 @@ Optional overrides:
 HOST=0.0.0.0 PORT=8080 npm run server
 ELENWEAVE_DATA_DIR=/path/to/shared-store npm run server
 OPENAI_API_KEY=... GEMINI_API_KEY=... npm run server
+ELENWEAVE_EXPERIMENTAL_HAND_CONTROLS=off npm run server
 ```
 
 CLI equivalents:
 
 ```bash
 npx elenweave-app --mode server --host 0.0.0.0 --port 8080 --data-dir /path/to/shared-store
+npx elenweave-app --hand-controls off --hand-model-base-url https://example.com/mediapipe
 ```
 
 Client-only runtime (browser IndexedDB, API routes disabled):
@@ -186,6 +188,9 @@ Native seed folders may include optional `seed.config.json` with read-only defau
 ## Notes
 
 - When serving `app/index.html`, the server injects runtime config with `storageMode` from `ELENWEAVE_RUNTIME_MODE` (`server` by default).
+- Hand controls runtime flags:
+  - `ELENWEAVE_EXPERIMENTAL_HAND_CONTROLS=on|off`
+  - `ELENWEAVE_HAND_CONTROLS_MODEL_BASE_URL=<url>` (base URL containing `hand_landmarker.task`)
 - Board and project IDs use 16-character URL-safe IDs.
 - The server uses lock files + atomic writes for multi-process safety.
 - In server mode, boards and assets are file-backed source-of-truth.
