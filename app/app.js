@@ -422,6 +422,7 @@ let serverAiDefaultModels = new Map();
 let handControls = null;
 let handControlsBusy = false;
 let handControlsEnabled = false;
+let lastSelectedNodeEl = null;
 let nodeContextMenu = {
   el: null,
   nodeId: null,
@@ -960,6 +961,7 @@ workspace.on('graph:active', (graph) => {
   closeNodeContextMenu();
   selectedNodeId = null;
   selectedEdgeId = null;
+  clearSelectedNodeClass();
   realtimeTurnNodes = new Map();
   resetAiContext();
   view.selectNode(null);
@@ -985,6 +987,7 @@ view.on('selection', (node) => {
   closeNodeContextMenu();
   selectedNodeId = node?.id || null;
   selectedEdgeId = null;
+  syncSelectedNodeClass(node);
   updateEdgeFields(null);
   if (node) {
     focusSelectionIfNavigating(node);
@@ -1003,6 +1006,7 @@ view.on('edge:selection', (edge) => {
   closeNodeContextMenu();
   selectedEdgeId = edge?.id || null;
   selectedNodeId = null;
+  clearSelectedNodeClass();
   updateEdgeFields(edge);
   updateSendButton();
   if (edge) setStatus(`Selected edge ${edge.id}`, 1200);
@@ -4093,6 +4097,21 @@ function getNodeElement(nodeId) {
   const record = view?._htmlNodes?.get(nodeId);
   if (record?.el) return record.el;
   return view?.overlay?.querySelector(`[data-ew-node-id="${nodeId}"]`) || null;
+}
+
+function clearSelectedNodeClass() {
+  if (!lastSelectedNodeEl) return;
+  lastSelectedNodeEl.classList.remove('ew-node-selected');
+  lastSelectedNodeEl = null;
+}
+
+function syncSelectedNodeClass(node) {
+  clearSelectedNodeClass();
+  if (!node?.id) return;
+  const el = getNodeElement(node.id);
+  if (!el) return;
+  el.classList.add('ew-node-selected');
+  lastSelectedNodeEl = el;
 }
 
 function isPreviewEligibleNode(node) {

@@ -641,6 +641,21 @@ button#btnModelMatrix {
     line-height: 1.4;
 }
 
+/* Node border is visible only when selected. */
+[data-ew-node-id],
+[data-ew-node-id] .ew-node-shell {
+    border-color: transparent !important;
+    box-shadow: none !important;
+}
+
+[data-ew-node-id].ew-node-selected,
+[data-ew-node-id].ew-node-selected .ew-node-shell {
+    border-color: color-mix(in oklab, var(--app-accent) 72%, var(--app-border)) !important;
+    box-shadow:
+        0 0 0 1px color-mix(in oklab, var(--app-accent) 34%, transparent),
+        0 0 14px color-mix(in oklab, var(--app-accent) 18%, transparent) !important;
+}
+
 .ew-node-context-menu {
     position: fixed;
     z-index: 40;
