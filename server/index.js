@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
+import { executeServerTool } from './tools/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_DIR = path.resolve(__dirname, '..');
@@ -1038,20 +1039,13 @@ async function saveBoardForProject(projectId, boardId, payload) {
     const meta = await loadProjectMeta(projectId);
     if (!meta) return null;
 
-    const saved = await saveBoardPayload(projectId, boardId, payload);
     const existing = meta.boards.find((entry) => entry.id === boardId);
-    if (existing) {
-      existing.name = saved.name;
-      existing.updatedAt = saved.updatedAt;
-      if (!existing.createdAt) existing.createdAt = saved.createdAt;
-    } else {
-      meta.boards.push({
-        id: boardId,
-        name: saved.name,
-        createdAt: saved.createdAt,
-        updatedAt: saved.updatedAt
-      });
-    }
+    if (!existing) return null;
+
+    const saved = await saveBoardPayload(projectId, boardId, payload);
+    existing.name = saved.name;
+    existing.updatedAt = saved.updatedAt;
+    if (!existing.createdAt) existing.createdAt = saved.createdAt;
     meta.updatedAt = nowTs();
     await saveProjectMeta(projectId, meta);
 
@@ -1492,6 +1486,40 @@ async function handleApi(req, res, url) {
       await sendUpstreamResponse(res, upstream);
     } catch (err) {
       sendJson(res, 502, { error: 'UpstreamError', message: err.message || 'Gemini request failed.' });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/ai/tools/execute') {
+    try {
+      const body = await readJsonBody(req);
+      const toolName = String(body?.toolName || '').trim();
+      const args = body?.args && typeof body.args === 'object' && !Array.isArray(body.args)
+        ? body.args
+        : {};
+      const budget = body?.budget && typeof body.budget === 'object' && !Array.isArray(body.budget)
+        ? body.budget
+        : {};
+      const result = await executeServerTool(
+        { toolName, args, budget },
+        {
+          resolveAiProviderKey,
+          resolveAiProviderDefaultModel
+        }
+      );
+      if (!result?.ok) {
+        sendJson(res, result?.status || 400, {
+          error: result?.error?.code || 'ToolError',
+          message: result?.error?.message || 'Tool execution failed.'
+        });
+        return;
+      }
+      sendJson(res, 200, {
+        ok: true,
+        data: result?.data ?? null
+      });
+    } catch (err) {
+      sendJson(res, 502, { error: 'ToolError', message: err?.message || 'Tool execution failed.' });
     }
     return;
   }

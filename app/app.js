@@ -23,9 +23,14 @@ import {
   callOpenAI,
   callOpenAIMultimodal,
   callOpenAITranscription,
+  callOpenAIWithTools,
   callGemini,
   callGeminiMultimodal
 } from './llm_clients.js';
+import { createAiOrchestrator } from './agent/orchestrator.js';
+import { createToolRegistry } from './agent/tool_registry.js';
+import { createClientToolExecutor } from './agent/executors/client_tools.js';
+import { createServerToolExecutor } from './agent/executors/server_tools.js';
 import { createRealtimeAgent } from './realtime_audio.js';
 import { createHandControls } from './hand_controls.js';
 
@@ -120,6 +125,10 @@ const AI_ACTIONS_VERSION = 'ew-actions/v1';
 const AI_HISTORY_KEY = 'aiHistory';
 const AI_HISTORY_LIMIT = 4;
 const AI_HISTORY_TEXT_LIMIT = 1200;
+const AI_TOOL_MAX_STEPS = 8;
+const AI_TOOL_MAX_CALLS = 16;
+const AI_TOOL_MAX_WALL_MS = 30000;
+const AI_EXPERIMENTAL_SUBAGENTS = false;
 const AI_ATTACHMENT_TEXT_LIMIT = 8000;
 const LARGE_TEXT_ASSET_BYTES = 200 * 1024;
 const TEXT_PREVIEW_BYTES = 12000;
@@ -428,6 +437,7 @@ let realtimeState = { listening: false, speaking: false, capturing: false };
 let realtimeTurnNodes = new Map();
 let realtimeAudioStatusAt = 0;
 let aiRequestPending = false;
+let aiOrchestrator = null;
 let navFocusArmed = false;
 let navFocusTimer = null;
 let serverAiProviders = new Set();
@@ -1187,7 +1197,7 @@ async function handleSend() {
         message,
         attachments
       });
-      recordAiHistory({ message, response: result.text, provider, model });
+      recordAiHistory({ message, response: result.text, provider, model, toolTrace: result?.toolTrace || null });
       const plan = parseAiPlan(result.text);
       if (!plan) {
         console.warn('AI response not understood', result.text);
@@ -2983,10 +2993,23 @@ async function saveActiveGraph() {
   if (!view?.graph) return;
   const payload = view.exportGraph();
   if (!payload?.id) return;
+  const boardId = payload.id;
+  const fallbackProjectId = activeProjectId || 'local-default';
+  const scopedEntry = getBoardIndexEntry(boardId, fallbackProjectId);
+  const ownerEntries = getBoardIndexEntriesById(boardId);
+  if (!scopedEntry && ownerEntries.length) {
+    console.warn('Skipping board save due ownership mismatch', {
+      boardId,
+      activeProjectId: fallbackProjectId,
+      owners: ownerEntries.map((entry) => entry.projectId)
+    });
+    return;
+  }
+  const ownerProjectId = scopedEntry?.projectId || fallbackProjectId;
   const cleaned = scrubExportPayload(payload);
-  await saveGraphPayload(payload.id, cleaned);
-  updateBoardIndexEntry(payload.id, {
-    projectId: activeProjectId || 'local-default',
+  await saveGraphPayload(boardId, cleaned, ownerProjectId);
+  updateBoardIndexEntry(boardId, {
+    projectId: ownerProjectId,
     name: cleaned.name || 'Untitled',
     updatedAt: Date.now()
   });
@@ -3471,21 +3494,27 @@ function startBoardEdit(btn, board) {
 
 function commitBoardEdit(value) {
   if (!activeBoardEdit?.id) return;
+  const edit = activeBoardEdit;
+  const boardId = edit.id;
   const name = String(value || '').trim();
+  const preferredProjectId = activeProjectId || 'local-default';
+  const boardProjectId = getBoardIndexEntry(boardId, preferredProjectId)?.projectId
+    || getBoardIndexEntriesById(boardId)[0]?.projectId
+    || preferredProjectId;
   if (name) {
-    updateBoardIndexEntry(activeBoardEdit.id, {
-      projectId: activeProjectId || 'local-default',
+    updateBoardIndexEntry(boardId, {
+      projectId: boardProjectId,
       name,
       updatedAt: Date.now()
     });
-    if (view.graph && view.graph.id === activeBoardEdit.id) {
-      workspace.renameGraph(activeBoardEdit.id, name);
+    if (view.graph && view.graph.id === boardId) {
+      workspace.renameGraph(boardId, name);
     }
     ensureServerMode()
       .then((useServer) => {
         if (useServer) {
-          if (!activeProjectId) return null;
-          return apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards/${encodeURIComponent(activeBoardEdit.id)}`, {
+          if (!boardProjectId || boardProjectId === 'local-default') return null;
+          return apiFetch(`/api/projects/${encodeURIComponent(boardProjectId)}/boards/${encodeURIComponent(boardId)}`, {
             method: 'PATCH',
             body: { name }
           });
@@ -3571,17 +3600,25 @@ function getAiHistoryEntries() {
   return history.slice(-AI_HISTORY_LIMIT);
 }
 
-function recordAiHistory({ message, response, provider, model }) {
+function recordAiHistory({ message, response, provider, model, toolTrace = null }) {
   const graph = view?.graph;
   const meta = ensureGraphMeta(graph);
   if (!meta) return;
   const history = Array.isArray(meta[AI_HISTORY_KEY]) ? meta[AI_HISTORY_KEY] : [];
+  const trace = Array.isArray(toolTrace)
+    ? toolTrace.slice(-8).map((entry) => ({
+      name: String(entry?.name || ''),
+      status: String(entry?.status || ''),
+      durationMs: Number.isFinite(entry?.durationMs) ? entry.durationMs : null
+    }))
+    : null;
   history.push({
     ts: Date.now(),
     user: truncateAiHistoryText(message),
     assistant: truncateAiHistoryText(response),
     provider: provider || null,
-    model: model || null
+    model: model || null,
+    toolTrace: trace
   });
   meta[AI_HISTORY_KEY] = history.slice(-AI_HISTORY_LIMIT);
   graph.meta = meta;
@@ -3596,6 +3633,72 @@ function getAiHistorySnapshot() {
     user: entry?.user || '',
     assistant: entry?.assistant || ''
   }));
+}
+
+function getAiToolBoardContext(scope = 'selected') {
+  const mode = scope === 'context' || scope === 'full' ? scope : 'selected';
+  const selectedNode = selectedNodeId && view?.graph ? scrubNodePayload(view.graph.getNode(selectedNodeId)) : null;
+  const selectedEdge = selectedEdgeId && view?.graph
+    ? view.graph.edges.find((edge) => edge.id === selectedEdgeId) || null
+    : null;
+  const contextNodes = view?.graph
+    ? Array.from(aiContextNodeIds).map((id) => scrubNodePayload(view.graph.getNode(id))).filter(Boolean)
+    : [];
+  if (mode === 'selected') {
+    return {
+      selectedNode,
+      selectedEdge,
+      contextNodeCount: contextNodes.length
+    };
+  }
+  const payload = {
+    selectedNode,
+    selectedEdge,
+    contextNodes,
+    history: getAiHistorySnapshot()
+  };
+  if (mode === 'full' && view?.exportGraph) {
+    const snapshot = scrubExportPayload(view.exportGraph());
+    if (snapshot?.meta) {
+      snapshot.meta = null;
+    }
+    payload.board = snapshot;
+  }
+  return payload;
+}
+
+function getAiOrchestrator() {
+  if (aiOrchestrator) return aiOrchestrator;
+  const clientExecutor = createClientToolExecutor({
+    getBoardContext: (scope) => getAiToolBoardContext(scope),
+    invokeSubagent: async ({ agentType, goal, context, constraints }) => ({
+      status: 'blocked',
+      reason: 'Subagents are disabled in this runtime.',
+      agentType: agentType || null,
+      goal: goal || '',
+      context: context || {},
+      constraints: constraints || {}
+    })
+  });
+  const serverExecutor = createServerToolExecutor();
+  const toolRegistry = createToolRegistry({
+    clientExecutor,
+    serverExecutor,
+    enableSubagents: AI_EXPERIMENTAL_SUBAGENTS
+  });
+  aiOrchestrator = createAiOrchestrator({
+    callOpenAIWithTools,
+    toolRegistry,
+    onStatus: (message, timeout) => setStatus(message, timeout),
+    defaults: {
+      maxSteps: AI_TOOL_MAX_STEPS,
+      maxToolCalls: AI_TOOL_MAX_CALLS,
+      maxWallMs: AI_TOOL_MAX_WALL_MS,
+      allowMutatingTools: true,
+      allowPrivilegedTools: true
+    }
+  });
+  return aiOrchestrator;
 }
 
 function shouldIncludeBoardContext(context) {
@@ -3851,6 +3954,33 @@ async function requestAiPlan({ provider, apiKey, proxyBaseUrl = null, model, mes
         images: [{ dataUrl }]
       });
     }
+    try {
+      const orchestrator = getAiOrchestrator();
+      const requestId = `ai_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+      const orchestrated = await orchestrator.run({
+        apiKey,
+        proxyBaseUrl,
+        model,
+        prompt: aiPrompt,
+        instructions: [
+          'You are an AI planner for Elenweave.',
+          'Use tools when they materially help the request.',
+          'After tool use, return a single JSON object only, matching ew-actions/v1 requirements from the prompt.'
+        ].join(' '),
+        requestId,
+        budget: {
+          maxSteps: AI_TOOL_MAX_STEPS,
+          maxToolCalls: AI_TOOL_MAX_CALLS,
+          maxWallMs: AI_TOOL_MAX_WALL_MS
+        }
+      });
+      if (String(orchestrated?.text || '').trim()) {
+        return orchestrated;
+      }
+      console.warn('AI tool orchestration returned empty text. Falling back to single-turn.');
+    } catch (err) {
+      console.warn('AI tool orchestration failed. Falling back to single-turn request.', err);
+    }
     return callOpenAI({ apiKey, proxyBaseUrl, model, instructions: '', input: aiPrompt });
   }
 
@@ -3892,7 +4022,7 @@ async function handleAiFollowUp(node) {
       message,
       attachments
     });
-    recordAiHistory({ message, response: result.text, provider, model });
+    recordAiHistory({ message, response: result.text, provider, model, toolTrace: result?.toolTrace || null });
     const plan = parseAiPlan(result.text);
     if (!plan) {
       console.warn('AI response not understood', result.text);
@@ -5550,12 +5680,13 @@ function graphPayloadKey(projectId, graphId) {
   return `${WORKSPACE_GRAPH_PREFIX}${scope}_${graphId}`;
 }
 
-async function saveGraphPayload(graphId, payload) {
+async function saveGraphPayload(graphId, payload, projectIdOverride = null) {
   if (!graphId || !payload) return;
+  const targetProjectId = projectIdOverride || activeProjectId || 'local-default';
   if (await ensureServerMode()) {
     try {
-      if (!activeProjectId) throw new Error('No active project.');
-      await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards/${encodeURIComponent(graphId)}`, {
+      if (!targetProjectId || targetProjectId === 'local-default') throw new Error('No active project.');
+      await apiFetch(`/api/projects/${encodeURIComponent(targetProjectId)}/boards/${encodeURIComponent(graphId)}`, {
         method: 'PUT',
         body: { board: payload }
       });
@@ -5568,9 +5699,9 @@ async function saveGraphPayload(graphId, payload) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(WORKSPACE_STORE, 'readwrite');
     tx.objectStore(WORKSPACE_STORE).put({
-      id: graphPayloadKey(activeProjectId || 'local-default', graphId),
+      id: graphPayloadKey(targetProjectId, graphId),
       graphId,
-      projectId: activeProjectId || 'local-default',
+      projectId: targetProjectId,
       payload,
       updatedAt: Date.now()
     });

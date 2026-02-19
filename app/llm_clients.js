@@ -128,8 +128,18 @@ export async function callOpenAITranscription({ apiKey, proxyBaseUrl, file, mode
   return { text, response: json };
 }
 
-export async function callOpenAIWithTools({ apiKey, proxyBaseUrl, model, instructions, input, tools }) {
+export async function callOpenAIWithTools({ apiKey, proxyBaseUrl, model, instructions, input, tools, previousResponseId = '' }) {
   const useProxy = hasProxy(proxyBaseUrl);
+  const body = {
+    model,
+    instructions,
+    input,
+    tools
+  };
+  const previous = String(previousResponseId || '').trim();
+  if (previous) {
+    body.previous_response_id = previous;
+  }
   const res = await fetch(useProxy ? buildProxyUrl(proxyBaseUrl, '/api/ai/openai/responses') : 'https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: useProxy
@@ -138,12 +148,7 @@ export async function callOpenAIWithTools({ apiKey, proxyBaseUrl, model, instruc
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
-    body: JSON.stringify({
-      model,
-      instructions,
-      input,
-      tools
-    })
+    body: JSON.stringify(body)
   });
 
   if (!res.ok) {

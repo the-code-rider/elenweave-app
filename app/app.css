@@ -506,8 +506,9 @@ html[data-theme="light"] .desktop-field input {
     border-color: color-mix(in oklab, var(--app-accent) 45%, var(--app-border));
     background: linear-gradient(
         180deg,
-        color-mix(in oklab, var(--app-accent) 28%, var(--app-panel)),
-        color-mix(in oklab, var(--app-accent) 16%, var(--app-panel))
+        color-mix(in oklab, var(--app-accent) 32%, var(--app-panel)),
+        color-mix(in oklab, var(--app-accent) 24%, var(--app-panel)) 52%,
+        color-mix(in oklab, var(--app-accent) 18%, var(--app-panel))
     );
     color: var(--app-text);
     box-shadow:
@@ -520,8 +521,9 @@ html[data-theme="light"] .desktop-field input {
     border-color: color-mix(in oklab, var(--app-accent) 60%, var(--app-border));
     background: linear-gradient(
         180deg,
-        color-mix(in oklab, var(--app-accent) 34%, var(--app-panel)),
-        color-mix(in oklab, var(--app-accent) 20%, var(--app-panel))
+        color-mix(in oklab, var(--app-accent) 38%, var(--app-panel)),
+        color-mix(in oklab, var(--app-accent) 28%, var(--app-panel)) 52%,
+        color-mix(in oklab, var(--app-accent) 22%, var(--app-panel))
     );
 }
 
@@ -766,7 +768,12 @@ html[data-theme="light"] .settings-panel .btn.cycle::after {
 }
 
 html[data-theme="light"] .panel-footer .settings-toggle {
-    background: var(--app-accent);
+    background: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--app-accent) 86%, #ffffff 14%),
+        color-mix(in oklab, var(--app-accent) 94%, #ffffff 6%) 56%,
+        color-mix(in oklab, var(--app-accent) 82%, #1e6248 18%)
+    );
     border-color: color-mix(in oklab, var(--app-accent) 82%, rgba(0, 0, 0, 0.08));
     color: #ffffff;
     box-shadow:
@@ -1121,7 +1128,7 @@ html[data-theme="light"] .modal-backdrop {
     justify-content: space-between;
     gap: 8px;
     padding: 8px 11px;
-    max-height: 28px;
+    max-height: 32px;
     min-height: 28px;
     border-radius: 12px;
     border: 1px solid color-mix(in oklab, var(--app-border) 70%, rgba(255, 255, 255, 0.08));
@@ -1131,7 +1138,7 @@ html[data-theme="light"] .modal-backdrop {
         color-mix(in oklab, var(--app-panel) 92%, rgba(0, 0, 0, 0.12))
     );
     color: var(--app-text);
-    font-size: 0.64rem;
+    font-size: 0.7rem;
     letter-spacing: 0.08em;
     text-transform: none;
     cursor: pointer;
@@ -2110,7 +2117,12 @@ html[data-theme="light"] .input-bar.is-ai-busy {
 
 .app-panel #btnNew,
 .app-panel #btnNewProject {
-    background: var(--app-accent);
+    background: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--app-accent) 86%, #ffffff 14%),
+        color-mix(in oklab, var(--app-accent) 96%, #ffffff 4%) 55%,
+        color-mix(in oklab, var(--app-accent) 84%, #112419 16%)
+    );
     border-color: var(--app-accent);
     color: #102218;
     box-shadow:
@@ -2126,6 +2138,12 @@ html[data-theme="light"] .app-panel .btn {
 
 html[data-theme="light"] .app-panel #btnNew,
 html[data-theme="light"] .app-panel #btnNewProject {
+    background: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--app-accent) 84%, #ffffff 16%),
+        color-mix(in oklab, var(--app-accent) 92%, #ffffff 8%) 54%,
+        color-mix(in oklab, var(--app-accent) 78%, #1f6b4e 22%)
+    );
     color: #ffffff;
     box-shadow:
         0 6px 12px color-mix(in oklab, var(--app-accent) 20%, transparent),
