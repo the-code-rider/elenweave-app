@@ -848,7 +848,7 @@ els.projectSelect?.addEventListener('dblclick', () => {
 
 els.btnLink.addEventListener('click', () => {
   view.setLinkMode(!view.linkMode);
-  els.btnLink.classList.toggle('active', view.linkMode);
+  updateLinkModeButton();
   setStatus(view.linkMode ? 'Link mode on.' : 'Link mode off.');
 });
 
@@ -1479,9 +1479,12 @@ function renderForm(config, node) {
     const wrap = document.createElement('div');
     wrap.className = 'input-field';
 
-    const label = document.createElement('label');
-    label.textContent = field.label;
-    wrap.appendChild(label);
+    const hideFieldLabel = config.key === 'AI' && (field.key === 'prompt' || field.key === 'media');
+    if (!hideFieldLabel) {
+      const label = document.createElement('label');
+      label.textContent = field.label;
+      wrap.appendChild(label);
+    }
 
     let input;
     if (field.type === 'textarea') {
@@ -1501,6 +1504,9 @@ function renderForm(config, node) {
     if (field.placeholder) input.placeholder = field.placeholder;
     if (field.accept) input.accept = field.accept;
     if (field.multiple) input.multiple = true;
+    if (hideFieldLabel && field.label) {
+      input.setAttribute('aria-label', field.label);
+    }
 
     input.addEventListener('input', updateSendButton);
     if (config.key === 'HtmlText' && field.key === 'text') {
@@ -2020,16 +2026,13 @@ function updateRecordButton() {
 
 function updateRealtimeButton() {
   if (!els.btnRealtime) return;
-  const base = realtimeEnabled ? 'Realtime' : 'Realtime Off';
-  const label = realtimeEnabled
-    ? realtimeState.speaking
-      ? 'Realtime Responding'
-      : 'Realtime Listening'
-    : base;
-  els.btnRealtime.textContent = label;
+  els.btnRealtime.textContent = 'Realtime';
+  els.btnRealtime.setAttribute('aria-pressed', realtimeEnabled ? 'true' : 'false');
   els.btnRealtime.classList.toggle('active', realtimeEnabled);
-  els.btnRealtime.classList.toggle('is-live', realtimeEnabled);
-  els.btnRealtime.classList.toggle('is-speaking', realtimeEnabled && realtimeState.speaking);
+  const modeLabel = realtimeEnabled
+    ? (realtimeState.speaking ? 'responding' : 'listening')
+    : 'off';
+  els.btnRealtime.title = `Realtime ${modeLabel}`;
 }
 
 function initRealtime() {
@@ -5968,6 +5971,15 @@ function updateEdgeToggle() {
   els.edgeToggle.classList.toggle('active', style === 'curved');
 }
 
+function updateLinkModeButton() {
+  if (!els.btnLink) return;
+  const enabled = Boolean(view.linkMode);
+  els.btnLink.textContent = 'Link Mode';
+  els.btnLink.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+  els.btnLink.classList.toggle('active', enabled);
+  els.btnLink.title = enabled ? 'Link mode on' : 'Link mode off';
+}
+
 function setSettingsPanelOpen(open) {
   const isOpen = Boolean(open);
   if (els.settingsPanel) {
@@ -6016,21 +6028,21 @@ function updateHandControlsButton() {
   if (!els.btnHandControls) return;
   if (!HAND_CONTROLS_AVAILABLE) {
     els.btnHandControls.disabled = true;
-    els.btnHandControls.classList.remove('is-live');
-    els.btnHandControls.textContent = 'Hand Controls: Disabled';
+    els.btnHandControls.textContent = 'Hand Controls';
+    els.btnHandControls.setAttribute('aria-pressed', 'false');
+    els.btnHandControls.classList.remove('active');
     els.btnHandControls.title = 'Disabled by runtime config or URL flag.';
     return;
   }
   els.btnHandControls.disabled = handControlsBusy;
-  els.btnHandControls.classList.toggle('is-live', handControlsEnabled);
+  els.btnHandControls.textContent = 'Hand Controls';
+  els.btnHandControls.setAttribute('aria-pressed', handControlsEnabled ? 'true' : 'false');
+  els.btnHandControls.classList.toggle('active', handControlsEnabled);
   if (handControlsBusy) {
-    els.btnHandControls.textContent = 'Hand Controls: Starting...';
+    els.btnHandControls.setAttribute('aria-pressed', 'false');
     els.btnHandControls.title = 'Starting hand controls.';
     return;
   }
-  els.btnHandControls.textContent = handControlsEnabled
-    ? 'Hand Controls: On (exp)'
-    : 'Hand Controls: Off (exp)';
   els.btnHandControls.title = handControlsEnabled
     ? 'Disable camera hand controls'
     : 'Enable camera hand controls';

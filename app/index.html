@@ -63,7 +63,12 @@
               <label class="sr-only" for="projectSelect">Project</label>
               <select id="projectSelect" aria-label="Project"></select>
             </div>
-            <button class="btn ghost project-rename-btn" id="btnRenameProject" type="button" aria-label="Rename project">R</button>
+            <button class="btn ghost project-rename-btn" id="btnRenameProject" type="button" aria-label="Rename project">
+              <svg class="btn-icon" viewBox="0 0 36 36" aria-hidden="true">
+                <path d="M33.87 8.32 28 2.42a2.07 2.07 0 0 0-2.92 0L4.27 23.2l-1.9 8.2a2.06 2.06 0 0 0 2 2.5 2 2 0 0 0 .43 0l8.29-1.9 20.78-20.76a2.07 2.07 0 0 0 0-2.92M12.09 30.2l-7.77 1.63 1.77-7.62L21.66 8.7l6 6ZM29 13.25l-6-6 3.48-3.46 5.9 6Z" fill="currentColor"></path>
+              </svg>
+              <span class="sr-only">Rename project</span>
+            </button>
             <button class="btn accent project-add-btn" id="btnNewProject" type="button" aria-label="New project">+</button>
           </div>
         </section>
@@ -79,11 +84,8 @@
               <span class="sr-only">New board</span>
             </button>
             <button class="btn ghost board-action-btn" id="btnSortBoards" type="button" aria-label="Sort boards by time" title="Sort boards by newest updated time">
-              <svg class="btn-icon btn-icon-sort" viewBox="0 0 16 16" aria-hidden="true">
-                <circle cx="7" cy="8" r="4.2"></circle>
-                <path d="M7 5.9V8.4L8.8 9.6"></path>
-                <path d="M12 3.5V12.5"></path>
-                <path d="M10.9 11.4L12 12.5L13.1 11.4"></path>
+              <svg class="btn-icon btn-icon-sort" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6.293 4.293a1 1 0 0 1 1.414 0l4 4a1 1 0 0 1-1.414 1.414L8 7.414V19a1 1 0 1 1-2 0V7.414L3.707 9.707a1 1 0 0 1-1.414-1.414zM16 16.586V5a1 1 0 1 1 2 0v11.586l2.293-2.293a1 1 0 0 1 1.414 1.414l-4 4a1 1 0 0 1-1.414 0l-4-4a1 1 0 0 1 1.414-1.414z" fill="currentColor"></path>
               </svg>
               <span class="sr-only">Sort boards by time</span>
             </button>
@@ -104,22 +106,22 @@
               <button class="btn" id="btnModelMatrix" type="button">AI Model Config</button>
             </div>
             <div class="btn-row single">
-              <button class="btn" id="btnRealtime" type="button">Realtime Off(exp)</button>
+              <button class="btn toggle" id="btnRealtime" type="button" aria-pressed="false">Realtime</button>
             </div>
           </div>
           <div class="settings-panel__group">
             <div class="section-title">Tools</div>
             <div class="btn-row single">
-              <button class="btn toggle" id="btnLink" type="button">Link Mode</button>
+              <button class="btn toggle" id="btnLink" type="button" aria-pressed="false">Link Mode</button>
             </div>
             <div class="btn-row single">
-              <button class="btn" id="edgeToggle" type="button">Edges: Straight</button>
+              <button class="btn cycle" id="edgeToggle" type="button">Edges: Straight</button>
             </div>
             <div class="btn-row single">
-              <button class="btn" id="themeToggle" type="button">Theme</button>
+              <button class="btn cycle" id="themeToggle" type="button">Theme</button>
             </div>
             <div class="btn-row single">
-              <button class="btn" id="btnHandControls" type="button">Hand Controls: Off (exp)</button>
+              <button class="btn toggle" id="btnHandControls" type="button" aria-pressed="false">Hand Controls</button>
             </div>
             <div class="btn-row">
               <button class="btn" id="btnExport" type="button">Export Board</button>
@@ -192,8 +194,7 @@
           <div class="input-bar" id="inputBar">
             <div class="input-group input-group--component">
               <div class="input-select">
-                <label for="componentPicker">Component</label>
-                <select id="componentPicker"></select>
+                <select id="componentPicker" aria-label="Component"></select>
               </div>
             </div>
             <div class="input-group input-group--meta" id="metaGroup">
