@@ -23,16 +23,10 @@ import {
   callOpenAI,
   callOpenAIMultimodal,
   callOpenAITranscription,
-  callOpenAIWithTools,
   callGemini,
   callGeminiMultimodal
 } from './llm_clients.js';
-import { createAiOrchestrator } from './agent/orchestrator.js';
-import { createToolRegistry } from './agent/tool_registry.js';
-import { createClientToolExecutor } from './agent/executors/client_tools.js';
-import { createServerToolExecutor } from './agent/executors/server_tools.js';
 import { createRealtimeAgent } from './realtime_audio.js';
-import { createHandControls } from './hand_controls.js';
 
 const { ElenweaveWorkspace, ElenweaveView, ElenweaveNavigator } = window.Elenweave || {};
 if (!ElenweaveWorkspace || !ElenweaveView) {
@@ -73,7 +67,6 @@ const els = {
   status: document.getElementById('status'),
   themeToggle: document.getElementById('themeToggle'),
   edgeToggle: document.getElementById('edgeToggle'),
-  btnHandControls: document.getElementById('btnHandControls'),
   panelToggle: document.getElementById('panelToggle'),
   panelExpand: document.getElementById('panelExpand'),
   hintCenter: document.getElementById('hintCenter'),
@@ -112,7 +105,6 @@ const PANEL_STATE_KEY = 'elenweave_app_panel_collapsed';
 const HINT_STATE_KEY = 'elenweave_app_hint_collapsed';
 const EDGE_STYLE_KEY = 'elenweave_app_edge_style';
 const BOARD_SORT_KEY = 'elenweave_board_sort_order';
-const HAND_CONTROLS_STATE_KEY = 'elenweave_hand_controls_enabled';
 const AI_PROVIDER_KEY = 'elenweave_ai_provider';
 const AI_KEY_PREFIX = 'elenweave_ai_key_';
 const AI_MODEL_PREFIX = 'elenweave_ai_model_';
@@ -125,10 +117,6 @@ const AI_ACTIONS_VERSION = 'ew-actions/v1';
 const AI_HISTORY_KEY = 'aiHistory';
 const AI_HISTORY_LIMIT = 4;
 const AI_HISTORY_TEXT_LIMIT = 1200;
-const AI_TOOL_MAX_STEPS = 8;
-const AI_TOOL_MAX_CALLS = 16;
-const AI_TOOL_MAX_WALL_MS = 30000;
-const AI_EXPERIMENTAL_SUBAGENTS = false;
 const AI_ATTACHMENT_TEXT_LIMIT = 8000;
 const LARGE_TEXT_ASSET_BYTES = 200 * 1024;
 const TEXT_PREVIEW_BYTES = 12000;
@@ -146,9 +134,7 @@ const RUNTIME_CONFIG = (() => {
         serverBase: '',
         seedReadOnlyMode: 'off',
         seedReadOnlyProjectIds: [],
-        readOnlyFork: 'local',
-        experimentalHandControls: true,
-        handControlsModelBaseUrl: ''
+        readOnlyFork: 'local'
       };
     }
     const storageMode = raw.storageMode === 'server' ? 'server' : 'client';
@@ -162,18 +148,12 @@ const RUNTIME_CONFIG = (() => {
       ? raw.seedReadOnlyProjectIds.map((id) => String(id || '').trim()).filter(Boolean)
       : [];
     const readOnlyFork = raw.readOnlyFork === 'off' ? 'off' : 'local';
-    const experimentalHandControls = raw.experimentalHandControls !== false;
-    const handControlsModelBaseUrl = typeof raw.handControlsModelBaseUrl === 'string'
-      ? raw.handControlsModelBaseUrl.trim()
-      : '';
     return {
       storageMode,
       serverBase,
       seedReadOnlyMode,
       seedReadOnlyProjectIds,
-      readOnlyFork,
-      experimentalHandControls,
-      handControlsModelBaseUrl
+      readOnlyFork
     };
   } catch (err) {
     return {
@@ -181,9 +161,7 @@ const RUNTIME_CONFIG = (() => {
       serverBase: '',
       seedReadOnlyMode: 'off',
       seedReadOnlyProjectIds: [],
-      readOnlyFork: 'local',
-      experimentalHandControls: true,
-      handControlsModelBaseUrl: ''
+      readOnlyFork: 'local'
     };
   }
 })();
@@ -192,20 +170,6 @@ const IS_SERVER_MODE = RUNTIME_CONFIG.storageMode === 'server';
 const SEED_READ_ONLY_MODE = RUNTIME_CONFIG.seedReadOnlyMode || 'off';
 const SEED_READ_ONLY_PROJECTS = new Set(RUNTIME_CONFIG.seedReadOnlyProjectIds || []);
 const READ_ONLY_FORK_MODE = RUNTIME_CONFIG.readOnlyFork || 'local';
-const HAND_CONTROLS_MODEL_BASE_URL = RUNTIME_CONFIG.handControlsModelBaseUrl || '';
-const HAND_CONTROLS_QUERY = (() => {
-  try {
-    const raw = new URLSearchParams(window.location.search).get('hand');
-    if (!raw) return '';
-    const value = raw.trim().toLowerCase();
-    if (value === '1' || value === 'true' || value === 'on') return 'on';
-    if (value === '0' || value === 'false' || value === 'off') return 'off';
-    return '';
-  } catch (err) {
-    return '';
-  }
-})();
-const HAND_CONTROLS_AVAILABLE = RUNTIME_CONFIG.experimentalHandControls !== false && HAND_CONTROLS_QUERY !== 'off';
 
 const workspace = new ElenweaveWorkspace();
 const view = new ElenweaveView({
@@ -437,14 +401,10 @@ let realtimeState = { listening: false, speaking: false, capturing: false };
 let realtimeTurnNodes = new Map();
 let realtimeAudioStatusAt = 0;
 let aiRequestPending = false;
-let aiOrchestrator = null;
 let navFocusArmed = false;
 let navFocusTimer = null;
 let serverAiProviders = new Set();
 let serverAiDefaultModels = new Map();
-let handControls = null;
-let handControlsBusy = false;
-let handControlsEnabled = false;
 let lastSelectedNodeEl = null;
 let desktopRuntimeInfo = null;
 let desktopSettingsBusy = false;
@@ -831,10 +791,6 @@ els.btnSortBoards?.addEventListener('click', () => {
   setStatus(boardSortOrder === 'desc' ? 'Boards sorted by newest updated.' : 'Boards sorted by oldest updated.', 1200);
 });
 
-els.btnHandControls?.addEventListener('click', async () => {
-  await setHandControlsEnabled(!handControlsEnabled, { persist: true });
-});
-
 els.btnNewProject?.addEventListener('click', () => {
   const nextIndex = projectIndex.length + 1;
   createProject(`Project ${nextIndex}`);
@@ -975,10 +931,6 @@ window.addEventListener('keydown', (event) => {
 window.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
   closeNodeContextMenu();
-});
-window.addEventListener('beforeunload', () => {
-  if (!handControls) return;
-  handControls.destroy();
 });
 window.addEventListener('keydown', (event) => {
   if (isEditableElement(event.target)) return;
@@ -3635,72 +3587,6 @@ function getAiHistorySnapshot() {
   }));
 }
 
-function getAiToolBoardContext(scope = 'selected') {
-  const mode = scope === 'context' || scope === 'full' ? scope : 'selected';
-  const selectedNode = selectedNodeId && view?.graph ? scrubNodePayload(view.graph.getNode(selectedNodeId)) : null;
-  const selectedEdge = selectedEdgeId && view?.graph
-    ? view.graph.edges.find((edge) => edge.id === selectedEdgeId) || null
-    : null;
-  const contextNodes = view?.graph
-    ? Array.from(aiContextNodeIds).map((id) => scrubNodePayload(view.graph.getNode(id))).filter(Boolean)
-    : [];
-  if (mode === 'selected') {
-    return {
-      selectedNode,
-      selectedEdge,
-      contextNodeCount: contextNodes.length
-    };
-  }
-  const payload = {
-    selectedNode,
-    selectedEdge,
-    contextNodes,
-    history: getAiHistorySnapshot()
-  };
-  if (mode === 'full' && view?.exportGraph) {
-    const snapshot = scrubExportPayload(view.exportGraph());
-    if (snapshot?.meta) {
-      snapshot.meta = null;
-    }
-    payload.board = snapshot;
-  }
-  return payload;
-}
-
-function getAiOrchestrator() {
-  if (aiOrchestrator) return aiOrchestrator;
-  const clientExecutor = createClientToolExecutor({
-    getBoardContext: (scope) => getAiToolBoardContext(scope),
-    invokeSubagent: async ({ agentType, goal, context, constraints }) => ({
-      status: 'blocked',
-      reason: 'Subagents are disabled in this runtime.',
-      agentType: agentType || null,
-      goal: goal || '',
-      context: context || {},
-      constraints: constraints || {}
-    })
-  });
-  const serverExecutor = createServerToolExecutor();
-  const toolRegistry = createToolRegistry({
-    clientExecutor,
-    serverExecutor,
-    enableSubagents: AI_EXPERIMENTAL_SUBAGENTS
-  });
-  aiOrchestrator = createAiOrchestrator({
-    callOpenAIWithTools,
-    toolRegistry,
-    onStatus: (message, timeout) => setStatus(message, timeout),
-    defaults: {
-      maxSteps: AI_TOOL_MAX_STEPS,
-      maxToolCalls: AI_TOOL_MAX_CALLS,
-      maxWallMs: AI_TOOL_MAX_WALL_MS,
-      allowMutatingTools: true,
-      allowPrivilegedTools: true
-    }
-  });
-  return aiOrchestrator;
-}
-
 function shouldIncludeBoardContext(context) {
   const hasFiles = (context?.images?.length || 0) > 0
     || (context?.audio?.length || 0) > 0
@@ -3799,6 +3685,7 @@ function buildAiPrompt(message, context = {}) {
     '- If audio is attached and no transcript is provided, transcribe it before planning.',
     '- If an attachment is provided, do not add new ImageViewer/AudioPlayer nodes; the app will add the media node.',
     '- If a document/code file is attached, read it and use it as context for the plan.',
+    '- If the request lacks key details required to produce a quality result, ask a focused follow-up question first using TextInput or OptionPicker with data.aiFollowUp.',
     '- If you need user input before proceeding, add a TextInput or OptionPicker node with data.aiFollowUp { question, status: "open" }.',
     '- Do not set x/y coordinates; omit them so the app can auto-place nodes.',
     '- Prefer multiple small, single-idea nodes instead of one large text block.',
@@ -3953,33 +3840,6 @@ async function requestAiPlan({ provider, apiKey, proxyBaseUrl = null, model, mes
         prompt: aiPrompt,
         images: [{ dataUrl }]
       });
-    }
-    try {
-      const orchestrator = getAiOrchestrator();
-      const requestId = `ai_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-      const orchestrated = await orchestrator.run({
-        apiKey,
-        proxyBaseUrl,
-        model,
-        prompt: aiPrompt,
-        instructions: [
-          'You are an AI planner for Elenweave.',
-          'Use tools when they materially help the request.',
-          'After tool use, return a single JSON object only, matching ew-actions/v1 requirements from the prompt.'
-        ].join(' '),
-        requestId,
-        budget: {
-          maxSteps: AI_TOOL_MAX_STEPS,
-          maxToolCalls: AI_TOOL_MAX_CALLS,
-          maxWallMs: AI_TOOL_MAX_WALL_MS
-        }
-      });
-      if (String(orchestrated?.text || '').trim()) {
-        return orchestrated;
-      }
-      console.warn('AI tool orchestration returned empty text. Falling back to single-turn.');
-    } catch (err) {
-      console.warn('AI tool orchestration failed. Falling back to single-turn request.', err);
     }
     return callOpenAI({ apiKey, proxyBaseUrl, model, instructions: '', input: aiPrompt });
   }
@@ -4739,7 +4599,7 @@ function getAiComponentSpecs() {
         break;
       case 'ImageViewer':
         spec.props = { title: 'string', label: 'string', alt: 'string' };
-        spec.data = { src: 'string' };
+        spec.data = { src: 'string', assetId: 'string' };
         break;
       case 'VideoPlayer':
         spec.props = { title: 'string', label: 'string' };
@@ -5951,99 +5811,6 @@ function saveBoardSortOrder(order) {
   }
 }
 
-function loadHandControlsPreference() {
-  if (HAND_CONTROLS_QUERY === 'on') return true;
-  try {
-    return localStorage.getItem(HAND_CONTROLS_STATE_KEY) === 'true';
-  } catch (err) {
-    return false;
-  }
-}
-
-function saveHandControlsPreference(enabled) {
-  try {
-    localStorage.setItem(HAND_CONTROLS_STATE_KEY, enabled ? 'true' : 'false');
-  } catch (err) {
-    return;
-  }
-}
-
-async function ensureHandControlsController() {
-  if (handControls) return handControls;
-  handControls = createHandControls({
-    view,
-    canvasShell,
-    setStatus,
-    options: {
-      modelBaseUrl: HAND_CONTROLS_MODEL_BASE_URL || '',
-      onStateChange: (active) => {
-        handControlsEnabled = Boolean(active);
-        if (!handControlsEnabled && !handControlsBusy) {
-          saveHandControlsPreference(false);
-        }
-        updateHandControlsButton();
-      }
-    }
-  });
-  return handControls;
-}
-
-async function setHandControlsEnabled(enabled, options = {}) {
-  const persist = options.persist !== false;
-  const target = Boolean(enabled);
-  if (!HAND_CONTROLS_AVAILABLE) {
-    handControlsEnabled = false;
-    if (persist) saveHandControlsPreference(false);
-    updateHandControlsButton();
-    setStatus('Hand controls are disabled by runtime config.', 1800);
-    return false;
-  }
-  if (handControlsBusy) return handControlsEnabled;
-  if (target === handControlsEnabled) {
-    updateHandControlsButton();
-    return handControlsEnabled;
-  }
-  handControlsBusy = true;
-  updateHandControlsButton();
-  try {
-    if (target) {
-      const controller = await ensureHandControlsController();
-      await controller.enable();
-      handControlsEnabled = true;
-      setStatus('Hand controls enabled (experimental).', 1800);
-    } else {
-      if (handControls) await handControls.disable();
-      handControlsEnabled = false;
-      setStatus('Hand controls disabled.', 1200);
-    }
-    if (persist) saveHandControlsPreference(handControlsEnabled);
-  } catch (err) {
-    console.warn('Hand controls toggle failed', err);
-    if (handControls) {
-      try {
-        await handControls.disable();
-      } catch (disableErr) {
-        console.warn('Hand controls disable failed', disableErr);
-      }
-    }
-    handControlsEnabled = false;
-    if (persist) saveHandControlsPreference(false);
-    setStatus(`Hand controls unavailable: ${err?.message || 'failed to initialize'}.`, 2600);
-  } finally {
-    handControlsBusy = false;
-    updateHandControlsButton();
-  }
-  return handControlsEnabled;
-}
-
-async function initHandControls() {
-  updateHandControlsButton();
-  if (!HAND_CONTROLS_AVAILABLE) return;
-  const shouldEnable = loadHandControlsPreference();
-  if (!shouldEnable) return;
-  await setHandControlsEnabled(true, { persist: false });
-}
-
 function sortBoardsByTime(boards) {
   const rows = Array.isArray(boards) ? [...boards] : [];
   const factor = boardSortOrder === 'asc' ? 1 : -1;
@@ -6153,30 +5920,6 @@ function updateBoardSortButton() {
   els.btnSortBoards.setAttribute('aria-label', nextLabel);
   els.btnSortBoards.setAttribute('title', nextLabel);
   els.btnSortBoards.setAttribute('data-order', boardSortOrder);
-}
-
-function updateHandControlsButton() {
-  if (!els.btnHandControls) return;
-  if (!HAND_CONTROLS_AVAILABLE) {
-    els.btnHandControls.disabled = true;
-    els.btnHandControls.textContent = 'Hand Controls';
-    els.btnHandControls.setAttribute('aria-pressed', 'false');
-    els.btnHandControls.classList.remove('active');
-    els.btnHandControls.title = 'Disabled by runtime config or URL flag.';
-    return;
-  }
-  els.btnHandControls.disabled = handControlsBusy;
-  els.btnHandControls.textContent = 'Hand Controls';
-  els.btnHandControls.setAttribute('aria-pressed', handControlsEnabled ? 'true' : 'false');
-  els.btnHandControls.classList.toggle('active', handControlsEnabled);
-  if (handControlsBusy) {
-    els.btnHandControls.setAttribute('aria-pressed', 'false');
-    els.btnHandControls.title = 'Starting hand controls.';
-    return;
-  }
-  els.btnHandControls.title = handControlsEnabled
-    ? 'Disable camera hand controls'
-    : 'Enable camera hand controls';
 }
 
 function isDesktopBridgeAvailable() {
@@ -6370,7 +6113,6 @@ async function initApp() {
   initRealtime();
   restoreUiState();
   await initDesktopSettingsPanel();
-  await initHandControls();
   if (!restored && useServer) {
     setStatus('Server storage mode requires a live API. Could not load /api/projects.', 0);
     return;

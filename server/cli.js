@@ -12,8 +12,6 @@ const FLAG_TO_ENV = new Map([
   ['--seed-version', 'ELENWEAVE_SEED_VERSION'],
   ['--seed-readonly', 'ELENWEAVE_SEED_READONLY'],
   ['--readonly-fork', 'ELENWEAVE_READONLY_FORK'],
-  ['--hand-controls', 'ELENWEAVE_EXPERIMENTAL_HAND_CONTROLS'],
-  ['--hand-model-base-url', 'ELENWEAVE_HAND_CONTROLS_MODEL_BASE_URL'],
   ['--config', 'ELENWEAVE_CONFIG'],
   ['--ai-config', 'ELENWEAVE_AI_CONFIG']
 ]);
@@ -71,8 +69,6 @@ function printHelp() {
       '  --seed-version <version>',
       '  --seed-readonly <off|all|projects>',
       '  --readonly-fork <off|local>',
-      '  --hand-controls <on|off>',
-      '  --hand-model-base-url <url>',
       '  --config <path>',
       '  --ai-config <path>',
       '  --help',

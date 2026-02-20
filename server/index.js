@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
-import { executeServerTool } from './tools/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_DIR = path.resolve(__dirname, '..');
@@ -27,8 +26,6 @@ const RUNTIME_STORAGE_MODE = (() => {
   return RUNTIME_MODE_VALUES.has(raw) ? raw : 'server';
 })();
 const IS_SERVER_RUNTIME = RUNTIME_STORAGE_MODE === 'server';
-const HAND_CONTROLS_RUNTIME_ENABLED = parseRuntimeBoolean(process.env.ELENWEAVE_EXPERIMENTAL_HAND_CONTROLS, true);
-const HAND_CONTROLS_MODEL_BASE_URL = String(process.env.ELENWEAVE_HAND_CONTROLS_MODEL_BASE_URL || '').trim();
 const MAX_BODY_BYTES = 12 * 1024 * 1024;
 const LOCK_TIMEOUT_MS = Number.parseInt(process.env.ELENWEAVE_LOCK_TIMEOUT_MS || '5000', 10);
 const LOCK_RETRY_MS = Number.parseInt(process.env.ELENWEAVE_LOCK_RETRY_MS || '50', 10);
@@ -120,14 +117,6 @@ function normalizeSeedReadOnly(value) {
 function normalizeReadOnlyFork(value) {
   const mode = String(value || '').trim().toLowerCase();
   return READONLY_FORK_VALUES.has(mode) ? mode : 'local';
-}
-
-function parseRuntimeBoolean(value, fallback = true) {
-  const raw = String(value || '').trim().toLowerCase();
-  if (!raw) return fallback;
-  if (raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes') return true;
-  if (raw === '0' || raw === 'false' || raw === 'off' || raw === 'no') return false;
-  return fallback;
 }
 
 function parseSeedOptions() {
@@ -1490,40 +1479,6 @@ async function handleApi(req, res, url) {
     return;
   }
 
-  if (req.method === 'POST' && url.pathname === '/api/ai/tools/execute') {
-    try {
-      const body = await readJsonBody(req);
-      const toolName = String(body?.toolName || '').trim();
-      const args = body?.args && typeof body.args === 'object' && !Array.isArray(body.args)
-        ? body.args
-        : {};
-      const budget = body?.budget && typeof body.budget === 'object' && !Array.isArray(body.budget)
-        ? body.budget
-        : {};
-      const result = await executeServerTool(
-        { toolName, args, budget },
-        {
-          resolveAiProviderKey,
-          resolveAiProviderDefaultModel
-        }
-      );
-      if (!result?.ok) {
-        sendJson(res, result?.status || 400, {
-          error: result?.error?.code || 'ToolError',
-          message: result?.error?.message || 'Tool execution failed.'
-        });
-        return;
-      }
-      sendJson(res, 200, {
-        ok: true,
-        data: result?.data ?? null
-      });
-    } catch (err) {
-      sendJson(res, 502, { error: 'ToolError', message: err?.message || 'Tool execution failed.' });
-    }
-    return;
-  }
-
   if (req.method === 'GET' && url.pathname === '/api/projects') {
     const index = await readIndex();
     sendJson(res, 200, { projects: index.projects });
@@ -1950,9 +1905,7 @@ async function sendFile(res, filePath) {
       serverBase: '',
       seedReadOnlyMode: inServerMode ? READ_ONLY_CONFIG.mode : 'off',
       seedReadOnlyProjectIds: inServerMode ? Array.from(READ_ONLY_CONFIG.projectIds) : [],
-      readOnlyFork: inServerMode ? READ_ONLY_CONFIG.fork : 'off',
-      experimentalHandControls: HAND_CONTROLS_RUNTIME_ENABLED,
-      handControlsModelBaseUrl: HAND_CONTROLS_MODEL_BASE_URL
+      readOnlyFork: inServerMode ? READ_ONLY_CONFIG.fork : 'off'
     });
     return;
   }
@@ -1988,7 +1941,6 @@ async function start() {
   server.listen(PORT, HOST, () => {
     console.log(`Elenweave server running at http://${HOST}:${PORT}`);
     console.log(`Runtime mode: ${RUNTIME_STORAGE_MODE}`);
-    console.log(`Hand controls runtime: ${HAND_CONTROLS_RUNTIME_ENABLED ? 'on' : 'off'}`);
     if (IS_SERVER_RUNTIME) {
       console.log(`Data root: ${DATA_ROOT}`);
       if (seedResult?.applied) {

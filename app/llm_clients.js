@@ -28,16 +28,20 @@ function hasProxy(proxyBaseUrl) {
   return typeof proxyBaseUrl === 'string' && (proxyBaseUrl.length > 0 || proxyBaseUrl === '');
 }
 
+function openAIHeaders(useProxy, apiKey) {
+  return useProxy
+    ? { 'Content-Type': 'application/json' }
+    : {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    };
+}
+
 export async function callOpenAI({ apiKey, proxyBaseUrl, model, instructions, input }) {
   const useProxy = hasProxy(proxyBaseUrl);
   const res = await fetch(useProxy ? buildProxyUrl(proxyBaseUrl, '/api/ai/openai/responses') : 'https://api.openai.com/v1/responses', {
     method: 'POST',
-    headers: useProxy
-      ? { 'Content-Type': 'application/json' }
-      : {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
+    headers: openAIHeaders(useProxy, apiKey),
     body: JSON.stringify({
       model,
       instructions,
@@ -74,12 +78,7 @@ export async function callOpenAIMultimodal({ apiKey, proxyBaseUrl, model, prompt
   const useProxy = hasProxy(proxyBaseUrl);
   const res = await fetch(useProxy ? buildProxyUrl(proxyBaseUrl, '/api/ai/openai/responses') : 'https://api.openai.com/v1/responses', {
     method: 'POST',
-    headers: useProxy
-      ? { 'Content-Type': 'application/json' }
-      : {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
+    headers: openAIHeaders(useProxy, apiKey),
     body: JSON.stringify({
       model,
       input: [{ role: 'user', content }]
@@ -126,46 +125,6 @@ export async function callOpenAITranscription({ apiKey, proxyBaseUrl, file, mode
   const text = json.text || '';
   if (!text.trim()) throw new Error('OpenAI transcription: empty response');
   return { text, response: json };
-}
-
-export async function callOpenAIWithTools({ apiKey, proxyBaseUrl, model, instructions, input, tools, previousResponseId = '' }) {
-  const useProxy = hasProxy(proxyBaseUrl);
-  const body = {
-    model,
-    instructions,
-    input,
-    tools
-  };
-  const previous = String(previousResponseId || '').trim();
-  if (previous) {
-    body.previous_response_id = previous;
-  }
-  const res = await fetch(useProxy ? buildProxyUrl(proxyBaseUrl, '/api/ai/openai/responses') : 'https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: useProxy
-      ? { 'Content-Type': 'application/json' }
-      : {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-    body: JSON.stringify(body)
-  });
-
-  if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    throw new Error(`OpenAI error ${res.status}: ${t}`);
-  }
-
-  const json = await res.json();
-  const usage = json?.usage
-    ? {
-      inputTokens: Number.isFinite(json.usage.input_tokens) ? json.usage.input_tokens : null,
-      outputTokens: Number.isFinite(json.usage.output_tokens) ? json.usage.output_tokens : null,
-      totalTokens: Number.isFinite(json.usage.total_tokens) ? json.usage.total_tokens : null
-    }
-    : null;
-
-  return { response: json, usage };
 }
 
 function extractGeminiText(json) {
@@ -261,47 +220,6 @@ export async function callGeminiMultimodal({ apiKey, proxyBaseUrl, model, prompt
   return { text: textOut, usage, response: json };
 }
 
-export async function callGeminiWithTools({ apiKey, proxyBaseUrl, model, contents, tools }) {
-  const useProxy = hasProxy(proxyBaseUrl);
-  const url = useProxy
-    ? buildProxyUrl(proxyBaseUrl, '/api/ai/gemini/generateContent')
-    : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: useProxy
-      ? { 'Content-Type': 'application/json' }
-      : {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey
-      },
-    body: JSON.stringify({
-      ...(useProxy ? { model } : {}),
-      contents,
-      tools
-    })
-  });
-
-  if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    throw new Error(`Gemini error ${res.status}: ${t}`);
-  }
-
-  const json = await res.json();
-  const usageMeta = json?.usageMetadata || null;
-  const usage = usageMeta
-    ? {
-      inputTokens: Number.isFinite(usageMeta.promptTokenCount) ? usageMeta.promptTokenCount : null,
-      outputTokens: Number.isFinite(usageMeta.candidatesTokenCount) ? usageMeta.candidatesTokenCount : null,
-      totalTokens: Number.isFinite(usageMeta.totalTokenCount) ? usageMeta.totalTokenCount : null
-    }
-    : null;
-
-  const parts = json?.candidates?.[0]?.content?.parts || [];
-  const textOut = parts.map((p) => p.text).filter(Boolean).join('');
-  const functionCalls = parts.map((p) => p.functionCall).filter(Boolean);
-  return { text: textOut, functionCalls, response: json, usage };
-}
-
 function normalizeHostedUsage(raw) {
   if (!raw) return null;
   if (raw.inputTokens || raw.outputTokens) return raw;
@@ -337,32 +255,4 @@ export async function callHostedAI({ baseUrl, sessionToken, model, instructions,
   const usage = normalizeHostedUsage(json.usage || json.usageMetadata || null);
   if (!String(text || '').trim()) throw new Error('Hosted AI: empty response');
   return { text, usage, response: json };
-}
-
-export async function callHostedAIWithTools({ baseUrl, sessionToken, model, instructions, input, tools }) {
-  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/ai/complete`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${sessionToken}`
-    },
-    body: JSON.stringify({
-      mode: 'tools',
-      model,
-      instructions,
-      input,
-      tools
-    })
-  });
-
-  if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    throw new Error(`Hosted AI error ${res.status}: ${t}`);
-  }
-
-  const json = await res.json().catch(() => ({}));
-  const usage = normalizeHostedUsage(json.usage || json.usageMetadata || null);
-  const text = json.text || json.output_text || json.result || '';
-  const toolCalls = json.tool_calls || json.toolCalls || json.function_calls || [];
-  return { text, toolCalls, response: json, usage };
 }
