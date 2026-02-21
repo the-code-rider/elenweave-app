@@ -385,6 +385,38 @@ html[data-theme="light"] #projectSelect option {
     transform: rotate(180deg);
 }
 
+#btnDeleteBoard {
+    color: color-mix(in oklab, var(--app-warning) 78%, var(--app-text) 22%);
+    border-color: color-mix(in oklab, var(--app-warning) 42%, var(--app-border));
+}
+
+#btnDeleteBoard:hover:not(:disabled) {
+    background: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--app-warning) 18%, var(--app-panel)),
+        color-mix(in oklab, var(--app-warning) 10%, var(--app-panel))
+    );
+    border-color: color-mix(in oklab, var(--app-warning) 58%, var(--app-border));
+}
+
+#btnDeleteBoard:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+}
+
+html[data-theme="light"] #btnDeleteBoard {
+    color: color-mix(in oklab, #7d4a0f 86%, var(--app-text) 14%);
+    border-color: color-mix(in oklab, #c1842a 44%, var(--app-border));
+}
+
+html[data-theme="light"] #btnDeleteBoard:hover:not(:disabled) {
+    background: linear-gradient(
+        180deg,
+        color-mix(in oklab, #f6d9a7 52%, #ffffff 48%),
+        color-mix(in oklab, #eac180 62%, #ffffff 38%)
+    );
+}
+
 .panel-section--tools {
     margin-top: auto;
     display: grid;
@@ -1131,150 +1163,32 @@ html[data-theme="light"] .modal-backdrop {
     max-height: 32px;
     min-height: 28px;
     border-radius: 12px;
-    border: 1px solid color-mix(in oklab, var(--app-border) 70%, rgba(255, 255, 255, 0.08));
-    background: linear-gradient(
-        180deg,
-        color-mix(in oklab, var(--app-panel) 82%, rgba(255, 255, 255, 0.08)),
-        color-mix(in oklab, var(--app-panel) 92%, rgba(0, 0, 0, 0.12))
-    );
+    border: 1px solid transparent;
+    background: transparent;
     color: var(--app-text);
-    font-size: 0.7rem;
+    font-size: 0.8rem;
     letter-spacing: 0.08em;
     text-transform: none;
     cursor: pointer;
-    position: relative;
-    overflow: hidden;
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.08),
-        inset 0 -1px 0 rgba(0, 0, 0, 0.35),
-        0 0 0 rgba(0, 0, 0, 0);
-    transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+    box-shadow: none;
+    transition: border-color 120ms ease, background-color 120ms ease;
     align-self: start;
 }
 
 .board-item::before,
 .board-item::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-}
-
-.board-item::before {
-    background: linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.16),
-        rgba(255, 255, 255, 0.05) 36%,
-        rgba(0, 0, 0, 0.08) 70%,
-        rgba(0, 0, 0, 0.2)
-    );
-    opacity: 0.65;
-}
-
-.board-item::after {
-    border-radius: inherit;
-    box-shadow:
-        inset 1px 1px 0 rgba(255, 255, 255, 0.1),
-        inset -1px -1px 0 rgba(0, 0, 0, 0.38);
-}
-
-html:not([data-theme="light"]) .board-item {
-    border-color: color-mix(in oklab, var(--app-border) 78%, rgba(255, 255, 255, 0.04));
-    background: linear-gradient(
-        180deg,
-        color-mix(in oklab, var(--app-panel) 72%, rgba(255, 255, 255, 0.12)),
-        color-mix(in oklab, var(--app-panel) 88%, rgba(0, 0, 0, 0.26))
-    );
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.18),
-        inset 0 -2px 0 rgba(0, 0, 0, 0.46),
-        0 0 0 rgba(0, 0, 0, 0);
-}
-
-html[data-theme="light"] .board-item {
-    border-color: color-mix(in oklab, var(--app-border) 65%, rgba(255, 255, 255, 0.6));
-    background: linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.92),
-        rgba(236, 241, 248, 0.92)
-    );
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.9),
-        inset 0 -1px 0 rgba(18, 24, 38, 0.12),
-        0 6px 12px rgba(18, 24, 38, 0.1);
-}
-
-html[data-theme="light"] .board-item::before,
-html[data-theme="light"] .board-item::after {
-    opacity: 0;
-}
-
-html[data-theme="light"] .board-item.active {
-    background: linear-gradient(
-        180deg,
-        color-mix(in oklab, #ffffff 82%, var(--app-accent) 18%),
-        color-mix(in oklab, #f0f6ff 80%, var(--app-accent) 24%)
-    );
+    content: none;
 }
 
 .board-item:hover {
-    border-color: color-mix(in oklab, var(--app-accent) 45%, var(--app-border));
-    transform: translateY(-1px);
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.12),
-        inset 0 -1px 0 rgba(0, 0, 0, 0.35),
-        0 0 0 rgba(0, 0, 0, 0);
-}
-
-html:not([data-theme="light"]) .board-item:hover {
-    border-color: color-mix(in oklab, var(--app-accent) 52%, var(--app-border));
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.22),
-        inset 0 -2px 0 rgba(0, 0, 0, 0.5),
-        0 0 0 rgba(0, 0, 0, 0);
+    border-color: color-mix(in oklab, var(--app-border) 58%, transparent);
 }
 
 .board-item.active {
-    border-color: color-mix(in oklab, var(--app-accent) 70%, var(--app-border));
-    background: linear-gradient(
-        180deg,
-        color-mix(in oklab, var(--app-panel) 75%, var(--app-accent) 18%),
-        color-mix(in oklab, var(--app-panel) 85%, var(--app-accent) 26%)
-    );
-    box-shadow:
-        0 6px 14px color-mix(in oklab, var(--app-accent) 22%, transparent),
-        inset 0 1px 0 rgba(255, 255, 255, 0.12),
-        inset 0 -1px 0 rgba(0, 0, 0, 0.35),
-        0 0 0 rgba(0, 0, 0, 0);
-}
-
-html:not([data-theme="light"]) .board-item.active {
-    border-color: color-mix(in oklab, var(--app-accent) 84%, #ffffff 16%);
-    background: linear-gradient(
-        180deg,
-        color-mix(in oklab, var(--app-panel) 58%, var(--app-accent) 42%),
-        color-mix(in oklab, var(--app-panel) 74%, var(--app-accent) 30%)
-    );
-    color: color-mix(in oklab, #ffffff 88%, var(--app-accent) 12%);
-    transform: translateY(0);
-    box-shadow:
-        0 0 0 1px color-mix(in oklab, var(--app-accent) 44%, transparent),
-        0 7px 16px color-mix(in oklab, var(--app-accent) 28%, transparent),
-        inset 0 2px 3px rgba(0, 0, 0, 0.45),
-        inset 0 1px 0 rgba(255, 255, 255, 0.1),
-        inset 0 -1px 0 rgba(255, 255, 255, 0.08),
-        0 0 0 rgba(0, 0, 0, 0);
-}
-
-html:not([data-theme="light"]) .board-item.active::before {
-    opacity: 0.3;
-}
-
-html:not([data-theme="light"]) .board-item.active::after {
-    box-shadow:
-        inset 3px 0 0 color-mix(in oklab, var(--app-accent) 78%, #ffffff 22%),
-        inset 1px 1px 0 rgba(255, 255, 255, 0.18),
-        inset -1px -1px 0 rgba(0, 0, 0, 0.42);
+    border-color: color-mix(in oklab, var(--app-border) 68%, var(--app-accent) 32%);
+    background: transparent;
+    box-shadow: none;
+    color: var(--app-text);
 }
 
 .board-item.editing {
@@ -2259,4 +2173,3 @@ html[data-theme="light"] .app-panel .btn.ghost {
 
     }
 }
-

@@ -51,6 +51,7 @@ const els = {
   importFile: document.getElementById('importFile'),
   btnNew: document.getElementById('btnNew'),
   btnSortBoards: document.getElementById('btnSortBoards'),
+  btnDeleteBoard: document.getElementById('btnDeleteBoard'),
   componentPicker: document.getElementById('componentPicker'),
   inputBar: document.getElementById('inputBar'),
   inputFields: document.getElementById('inputFields'),
@@ -738,6 +739,7 @@ let boardIndex = [];
 let boardSortOrder = loadBoardSortOrder();
 let activeBoardId = null;
 let isBoardSwitching = false;
+let isBoardDeleting = false;
 let projectSwitchSeq = 0;
 let projectSwitchDepth = 0;
 
@@ -789,6 +791,10 @@ els.btnSortBoards?.addEventListener('click', () => {
   updateBoardSortButton();
   refreshBoardList();
   setStatus(boardSortOrder === 'desc' ? 'Boards sorted by newest updated.' : 'Boards sorted by oldest updated.', 1200);
+});
+
+els.btnDeleteBoard?.addEventListener('click', () => {
+  void deleteActiveBoardWithConfirm();
 });
 
 els.btnNewProject?.addEventListener('click', () => {
@@ -3002,7 +3008,7 @@ async function createProject(name) {
       const project = response?.project;
       if (!project?.id) throw new Error('Project create failed');
       ensureProjectIndexEntry(project.id, project.name || name || 'Untitled Project');
-      await activateProject(project.id, { skipSave: true, createBoardIfEmpty: true });
+      await activateProject(project.id, { skipSave: true, createBoardIfEmpty: false });
       setStatus('Project created.');
       return;
     } catch (err) {
@@ -3020,7 +3026,7 @@ async function createProject(name) {
     updatedAt: Date.now()
   };
   projectIndex.push(entry);
-  await activateProject(id, { force: true, createBoardIfEmpty: true });
+  await activateProject(id, { force: true, createBoardIfEmpty: false });
   setStatus('Project created.');
 }
 
@@ -3211,7 +3217,7 @@ async function activateProject(projectId, options = {}) {
         nextBoardId = projectBoards[0]?.id || null;
       }
 
-      if (!nextBoardId && options.createBoardIfEmpty !== false) {
+      if (!nextBoardId && options.createBoardIfEmpty === true) {
         const created = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/boards`, {
           method: 'POST',
           body: { name: 'Board 01' }
@@ -3237,6 +3243,8 @@ async function activateProject(projectId, options = {}) {
       refreshBoardList();
       if (nextBoardId) {
         await activateBoard(nextBoardId, { skipSave: true, projectId });
+      } else {
+        clearBoardViewForEmptyProject();
       }
       validateBoardIndexInvariants();
       return;
@@ -3249,7 +3257,7 @@ async function activateProject(projectId, options = {}) {
     if (!boards.some((entry) => entry.id === nextBoardId)) {
       nextBoardId = boards[0]?.id || null;
     }
-    if (!nextBoardId && options.createBoardIfEmpty !== false) {
+    if (!nextBoardId && options.createBoardIfEmpty === true) {
       const created = await createLocalBoard('Board 01', {
         activate: false,
         queueEdit: false
@@ -3265,6 +3273,8 @@ async function activateProject(projectId, options = {}) {
     refreshBoardList();
     if (nextBoardId) {
       await activateBoard(nextBoardId, { skipSave: true, projectId: localProjectId });
+    } else {
+      clearBoardViewForEmptyProject();
     }
     validateBoardIndexInvariants();
   } catch (err) {
@@ -3350,6 +3360,72 @@ async function createBoard(name) {
   setStatus('Board created.');
 }
 
+function clearBoardViewForEmptyProject() {
+  closeNodeContextMenu();
+  selectedNodeId = null;
+  selectedEdgeId = null;
+  clearSelectedNodeClass();
+  realtimeTurnNodes = new Map();
+  resetAiContext();
+  updateEdgeFields(null);
+  workspace.clear();
+  collapseNotificationPanel();
+}
+
+async function deleteActiveBoardWithConfirm() {
+  if (isBoardDeleting) return;
+  const projectId = activeProjectId || 'local-default';
+  const boards = getBoardsForProject(projectId);
+  if (!activeBoardId || !boards.length) {
+    setStatus('No active board to delete.', 1500);
+    updateDeleteBoardButton();
+    return;
+  }
+  const activeIndex = boards.findIndex((entry) => entry.id === activeBoardId);
+  const activeEntry = activeIndex >= 0 ? boards[activeIndex] : null;
+  if (!activeEntry) {
+    setStatus('No active board to delete.', 1500);
+    updateDeleteBoardButton();
+    return;
+  }
+  const boardName = activeEntry.name || 'Untitled';
+  const confirmed = window.confirm(`Delete board "${boardName}"? This cannot be undone.`);
+  if (!confirmed) return;
+
+  isBoardDeleting = true;
+  updateDeleteBoardButton();
+  try {
+    cancelBoardEdit();
+    const boardId = activeEntry.id;
+    await deleteGraphPayload(boardId);
+    boardIndex = boardIndex.filter((entry) => !(
+      entry.id === boardId
+      && (entry.projectId || null) === (projectId || null)
+    ));
+    const remainingBoards = getBoardsForProject(projectId);
+    validateBoardIndexInvariants();
+
+    if (remainingBoards.length) {
+      const nextIndex = Math.max(0, Math.min(activeIndex, remainingBoards.length - 1));
+      const nextBoardId = remainingBoards[nextIndex]?.id || remainingBoards[0].id;
+      await activateBoard(nextBoardId, { skipSave: true, projectId });
+    } else {
+      activeBoardId = null;
+      clearBoardViewForEmptyProject();
+    }
+
+    await saveWorkspaceIndex();
+    refreshBoardList();
+    setStatus(remainingBoards.length ? 'Board deleted.' : 'Board deleted. Project is now empty.', 1700);
+  } catch (err) {
+    console.warn('Board delete failed', err);
+    setStatus('Board delete failed.', 2000);
+  } finally {
+    isBoardDeleting = false;
+    updateDeleteBoardButton();
+  }
+}
+
 async function importBoardPayload(payload) {
   if (!payload || !Array.isArray(payload.nodes) || !Array.isArray(payload.edges)) return null;
   if (!activeProjectId) {
@@ -3398,6 +3474,7 @@ function refreshBoardList() {
     els.boardList.appendChild(btn);
   });
   flushQueuedBoardEdit();
+  updateDeleteBoardButton();
 }
 
 function queueBoardEdit(graphId) {
@@ -5597,7 +5674,7 @@ async function deleteGraphPayload(graphId) {
       if (!activeProjectId) return;
       await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards/${encodeURIComponent(graphId)}`, { method: 'DELETE' });
     } catch (err) {
-      if (!err?.forkedToLocal) return;
+      if (!err?.forkedToLocal) throw err;
     }
     if (!forceClientMode) return;
   }
@@ -5897,6 +5974,7 @@ function restoreUiState() {
   }
   updatePanelToggleState(panelCollapsed);
   updateBoardSortButton();
+  updateDeleteBoardButton();
   const hintCollapsed = readCollapseState(HINT_STATE_KEY);
   if (els.hintCenter && hintCollapsed) {
     els.hintCenter.classList.add('is-collapsed');
@@ -5920,6 +5998,20 @@ function updateBoardSortButton() {
   els.btnSortBoards.setAttribute('aria-label', nextLabel);
   els.btnSortBoards.setAttribute('title', nextLabel);
   els.btnSortBoards.setAttribute('data-order', boardSortOrder);
+}
+
+function updateDeleteBoardButton() {
+  if (!els.btnDeleteBoard) return;
+  const hasActiveBoard = Boolean(activeBoardId && getBoardIndexEntry(activeBoardId, activeProjectId || 'local-default'));
+  const disabled = isBoardDeleting || !hasActiveBoard;
+  els.btnDeleteBoard.disabled = disabled;
+  const title = isBoardDeleting
+    ? 'Deleting active board...'
+    : hasActiveBoard
+      ? 'Delete active board'
+      : 'No active board to delete';
+  els.btnDeleteBoard.setAttribute('title', title);
+  els.btnDeleteBoard.setAttribute('aria-label', title);
 }
 
 function isDesktopBridgeAvailable() {
@@ -6171,30 +6263,14 @@ async function restoreServerWorkspace() {
     if (!boardIndex.some((entry) => entry.id === boardId)) {
       boardId = boardIndex[0]?.id || null;
     }
-    if (!boardId) {
-      try {
-        const createdBoard = await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards`, {
-          method: 'POST',
-          body: { name: 'Board 01' }
-        });
-        if (!createdBoard?.board?.id) return false;
-        boardIndex.push({
-          id: createdBoard.board.id,
-          projectId: activeProjectId,
-          name: createdBoard.board.name || 'Board 01',
-          updatedAt: createdBoard.board.updatedAt || Date.now()
-        });
-        boardId = createdBoard.board.id;
-      } catch (err) {
-        if (err?.forkedToLocal) {
-          return restoreWorkspace();
-        }
-        throw err;
-      }
-    }
     validateBoardIndexInvariants();
     activeBoardId = boardId;
-    await activateBoard(activeBoardId, { skipSave: true, projectId: activeProjectId });
+    if (activeBoardId) {
+      await activateBoard(activeBoardId, { skipSave: true, projectId: activeProjectId });
+    } else {
+      clearBoardViewForEmptyProject();
+      await saveWorkspaceIndex();
+    }
     return true;
   } catch (err) {
     console.warn('Server workspace restore failed', err);
@@ -6208,7 +6284,7 @@ async function restoreWorkspace() {
       return restoreServerWorkspace();
     }
     const index = await loadWorkspaceIndex();
-    if (!index || !Array.isArray(index.boards) || !index.boards.length) {
+    if (!index || !Array.isArray(index.boards)) {
       const legacy = await loadLegacyWorkspacePayload();
       if (!legacy || !Array.isArray(legacy.graphs) || !legacy.graphs.length) return false;
       boardIndex = legacy.graphs.map((graph) => ({
@@ -6230,7 +6306,10 @@ async function restoreWorkspace() {
       activeProjectId = projectIndex[0].id;
       await saveWorkspaceIndex();
       await clearLegacyWorkspacePayload();
-      if (!activeBoardId) return false;
+      if (!activeBoardId) {
+        clearBoardViewForEmptyProject();
+        return true;
+      }
       await activateBoard(activeBoardId, { skipSave: true, projectId: activeProjectId });
       return true;
     }
@@ -6263,13 +6342,9 @@ async function restoreWorkspace() {
       ? index.activeGraphId
       : activeBoards[0]?.id || null;
     if (!activeBoardId) {
-      if (!activeProjectId) return false;
-      const created = await createLocalBoard('Board 01', {
-        activate: false,
-        queueEdit: false
-      });
-      activeBoardId = created.id;
+      clearBoardViewForEmptyProject();
       await saveWorkspaceIndex();
+      return true;
     }
     await activateBoard(activeBoardId, { skipSave: true, projectId: activeProjectId });
     return true;
