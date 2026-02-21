@@ -83,6 +83,13 @@ In server mode, board/workspace/assets are server source-of-truth only.
 
 Server-side disk layout is documented in `docs/SERVER.md`.
 
+## Public project downloads
+
+When the Download panel is opened, the app fetches a public catalog JSON URL from runtime config
+(`publicProjectsCatalogUrl`). Each catalog entry points to a manifest URL. The app requests a
+server-side import, which downloads boards and assets and stores them as a local project. This
+workflow requires server mode; in client-only mode the download button is disabled.
+
 ## Runtime flow
 
 1. App boots with `window.__ELENWEAVE_RUNTIME__` (`storageMode: "client" | "server"` plus optional seed read-only flags).

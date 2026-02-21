@@ -184,6 +184,7 @@ See:
 - `docs/SERVER.md`
 - `docs/seed.md`
 - `docs/followup.md`
+- `docs/public-catalog.md`
 - `server/config.example.json`
 
 ## Configuration
@@ -203,6 +204,7 @@ Accepted params:
 | `readOnlyFork` | `'off' \| 'local'` | No | Read-only edit behavior (`local` = browser IndexedDB fork). |
 | `experimentalHandControls` | `boolean` | No | Enable/disable MediaPipe hand-controls feature availability at runtime. |
 | `handControlsModelBaseUrl` | `string` | No | Optional base URL for `hand_landmarker.task` (defaults to hosted MediaPipe model). |
+| `publicProjectsCatalogUrl` | `string` | No | Optional URL to a public project catalog JSON. Enables the in-app Download panel. |
 
 Mode behavior:
 
@@ -216,6 +218,66 @@ Mode behavior:
 - When enabled, browser camera access is required; disabling stops the camera stream immediately.
 - URL kill switch: append `?hand=off` to force-disable for that session URL.
 - URL force-enable: append `?hand=on` to auto-enable at startup.
+
+## Public Project Catalog (Download Panel)
+
+Set the catalog URL to enable the download panel:
+
+```bash
+ELENWEAVE_PUBLIC_CATALOG_URL=https://example.com/catalog.json npm run server
+```
+
+The catalog JSON shape:
+
+```json
+{
+  "projects": [
+    {
+      "id": "catalog-project-id",
+      "name": "Project name",
+      "description": "Short description",
+      "publisher": "Publisher name",
+      "publishedAt": "2026-01-01T00:00:00Z",
+      "updatedAt": "2026-01-10T00:00:00Z",
+      "version": "1.0.0",
+      "coverUrl": "https://example.com/cover.png",
+      "tags": ["tag-a", "tag-b"],
+      "manifestUrl": "https://example.com/project-manifest.json"
+    }
+  ]
+}
+```
+
+The manifest JSON shape:
+
+```json
+{
+  "id": "catalog-project-id",
+  "name": "Project name",
+  "description": "Short description",
+  "publisher": "Publisher name",
+  "publishedAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-10T00:00:00Z",
+  "version": "1.0.0",
+  "coverUrl": "https://example.com/cover.png",
+  "tags": ["tag-a", "tag-b"],
+  "assets": [
+    { "id": "asset-1", "name": "logo", "mimeType": "image/png", "file": "assets/logo.png" }
+  ],
+  "boards": [
+    { "name": "Intro board", "file": "boards/intro.json" }
+  ]
+}
+```
+
+Boards can be inlined instead of `file`:
+
+```json
+{
+  "name": "Intro board",
+  "payload": { "nodes": [], "edges": [], "nodeOrder": [], "notifications": [] }
+}
+```
 
 ### App/AI Config File (`config.json`)
 

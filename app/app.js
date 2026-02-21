@@ -44,10 +44,20 @@ const els = {
   // btnNext: document.getElementById('btnNext'),
   btnLink: document.getElementById('btnLink'),
   btnExport: document.getElementById('btnExport'),
+  btnFooterDownload: document.getElementById('btnFooterDownload'),
   btnImport: document.getElementById('btnImport'),
   settingsToggle: document.getElementById('settingsToggle'),
   settingsPanel: document.getElementById('settingsPanel'),
   settingsClose: document.getElementById('settingsClose'),
+  deleteBoardModal: document.getElementById('deleteBoardModal'),
+  deleteBoardClose: document.getElementById('deleteBoardClose'),
+  deleteBoardCancel: document.getElementById('deleteBoardCancel'),
+  deleteBoardConfirm: document.getElementById('deleteBoardConfirm'),
+  deleteBoardMessage: document.getElementById('deleteBoardMessage'),
+  downloadOverlay: document.getElementById('downloadOverlay'),
+  downloadClose: document.getElementById('downloadClose'),
+  downloadSearch: document.getElementById('downloadSearch'),
+  downloadGrid: document.getElementById('downloadGrid'),
   importFile: document.getElementById('importFile'),
   btnNew: document.getElementById('btnNew'),
   btnSortBoards: document.getElementById('btnSortBoards'),
@@ -135,7 +145,8 @@ const RUNTIME_CONFIG = (() => {
         serverBase: '',
         seedReadOnlyMode: 'off',
         seedReadOnlyProjectIds: [],
-        readOnlyFork: 'local'
+        readOnlyFork: 'local',
+        publicProjectsCatalogUrl: ''
       };
     }
     const storageMode = raw.storageMode === 'server' ? 'server' : 'client';
@@ -149,12 +160,16 @@ const RUNTIME_CONFIG = (() => {
       ? raw.seedReadOnlyProjectIds.map((id) => String(id || '').trim()).filter(Boolean)
       : [];
     const readOnlyFork = raw.readOnlyFork === 'off' ? 'off' : 'local';
+    const publicProjectsCatalogUrl = typeof raw.publicProjectsCatalogUrl === 'string'
+      ? raw.publicProjectsCatalogUrl.trim()
+      : '';
     return {
       storageMode,
       serverBase,
       seedReadOnlyMode,
       seedReadOnlyProjectIds,
-      readOnlyFork
+      readOnlyFork,
+      publicProjectsCatalogUrl
     };
   } catch (err) {
     return {
@@ -162,7 +177,8 @@ const RUNTIME_CONFIG = (() => {
       serverBase: '',
       seedReadOnlyMode: 'off',
       seedReadOnlyProjectIds: [],
-      readOnlyFork: 'local'
+      readOnlyFork: 'local',
+      publicProjectsCatalogUrl: ''
     };
   }
 })();
@@ -171,6 +187,7 @@ const IS_SERVER_MODE = RUNTIME_CONFIG.storageMode === 'server';
 const SEED_READ_ONLY_MODE = RUNTIME_CONFIG.seedReadOnlyMode || 'off';
 const SEED_READ_ONLY_PROJECTS = new Set(RUNTIME_CONFIG.seedReadOnlyProjectIds || []);
 const READ_ONLY_FORK_MODE = RUNTIME_CONFIG.readOnlyFork || 'local';
+const PUBLIC_CATALOG_URL = RUNTIME_CONFIG.publicProjectsCatalogUrl || '';
 
 const workspace = new ElenweaveWorkspace();
 const view = new ElenweaveView({
@@ -409,6 +426,7 @@ let serverAiDefaultModels = new Map();
 let lastSelectedNodeEl = null;
 let desktopRuntimeInfo = null;
 let desktopSettingsBusy = false;
+let pendingDeleteBoard = null;
 let nodeContextMenu = {
   el: null,
   nodeId: null,
@@ -742,6 +760,10 @@ let isBoardSwitching = false;
 let isBoardDeleting = false;
 let projectSwitchSeq = 0;
 let projectSwitchDepth = 0;
+let publicCatalogProjects = [];
+let publicCatalogStatus = 'idle';
+let publicCatalogError = '';
+let publicCatalogLoadedAt = 0;
 
 view.registerComponent('OptionPicker', { render: OptionPicker });
 view.registerComponent('TextInput', { render: TextInput });
@@ -794,7 +816,7 @@ els.btnSortBoards?.addEventListener('click', () => {
 });
 
 els.btnDeleteBoard?.addEventListener('click', () => {
-  void deleteActiveBoardWithConfirm();
+  requestDeleteActiveBoard();
 });
 
 els.btnNewProject?.addEventListener('click', () => {
@@ -837,8 +859,31 @@ els.edgeToggle?.addEventListener('click', () => {
 });
 
 els.btnExport.addEventListener('click', () => exportBoard());
+els.btnFooterDownload?.addEventListener('click', () => setDownloadPanelOpen(true));
 els.btnImport.addEventListener('click', () => els.importFile.click());
 els.importFile.addEventListener('change', (e) => handleImportFile(e));
+els.deleteBoardClose?.addEventListener('click', () => setDeleteBoardModalOpen(false));
+els.deleteBoardCancel?.addEventListener('click', () => setDeleteBoardModalOpen(false));
+els.deleteBoardConfirm?.addEventListener('click', () => {
+  void confirmDeleteBoard();
+});
+els.deleteBoardModal?.addEventListener('click', (event) => {
+  if (event.target === els.deleteBoardModal) {
+    setDeleteBoardModalOpen(false);
+  }
+});
+els.downloadClose?.addEventListener('click', () => setDownloadPanelOpen(false));
+els.downloadOverlay?.addEventListener('click', (event) => {
+  if (!event.target || !(event.target instanceof HTMLElement)) return;
+  if (event.target.dataset.downloadClose === 'true') {
+    setDownloadPanelOpen(false);
+  }
+});
+els.downloadSearch?.addEventListener('input', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  renderDownloadPanel(target.value);
+});
 
 els.componentPicker.addEventListener('change', (e) => {
   const key = e.target.value;
@@ -933,6 +978,14 @@ window.addEventListener('keydown', (event) => {
 window.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
   setSettingsPanelOpen(false);
+});
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  setDeleteBoardModalOpen(false);
+});
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  setDownloadPanelOpen(false);
 });
 window.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
@@ -2790,6 +2843,18 @@ function refreshProjectList() {
   }
 }
 
+async function refreshProjectsFromServer() {
+  if (!IS_SERVER_MODE || forceClientMode) return;
+  try {
+    const payload = await apiFetch('/api/projects');
+    const projects = Array.isArray(payload?.projects) ? payload.projects : [];
+    projectIndex = projects.map((entry) => mapProjectEntry(entry)).filter((entry) => entry.id);
+    refreshProjectList();
+  } catch (err) {
+    console.warn('Project refresh failed', err);
+  }
+}
+
 function generateProjectId() {
   let id = '';
   do {
@@ -3372,7 +3437,20 @@ function clearBoardViewForEmptyProject() {
   collapseNotificationPanel();
 }
 
-async function deleteActiveBoardWithConfirm() {
+function setDeleteBoardModalOpen(open) {
+  if (!els.deleteBoardModal) return;
+  const isOpen = Boolean(open);
+  els.deleteBoardModal.hidden = !isOpen;
+  if (!isOpen) {
+    pendingDeleteBoard = null;
+    return;
+  }
+  if (els.deleteBoardConfirm) {
+    els.deleteBoardConfirm.focus();
+  }
+}
+
+function requestDeleteActiveBoard() {
   if (isBoardDeleting) return;
   const projectId = activeProjectId || 'local-default';
   const boards = getBoardsForProject(projectId);
@@ -3381,37 +3459,66 @@ async function deleteActiveBoardWithConfirm() {
     updateDeleteBoardButton();
     return;
   }
-  const activeIndex = boards.findIndex((entry) => entry.id === activeBoardId);
-  const activeEntry = activeIndex >= 0 ? boards[activeIndex] : null;
+  const activeEntry = boards.find((entry) => entry.id === activeBoardId) || null;
   if (!activeEntry) {
     setStatus('No active board to delete.', 1500);
     updateDeleteBoardButton();
     return;
   }
-  const boardName = activeEntry.name || 'Untitled';
-  const confirmed = window.confirm(`Delete board "${boardName}"? This cannot be undone.`);
-  if (!confirmed) return;
+  pendingDeleteBoard = {
+    id: activeEntry.id,
+    projectId,
+    name: activeEntry.name || 'Untitled'
+  };
+  if (els.deleteBoardMessage) {
+    els.deleteBoardMessage.textContent = `Delete board "${pendingDeleteBoard.name}"? This cannot be undone.`;
+  }
+  setDeleteBoardModalOpen(true);
+}
+
+async function confirmDeleteBoard() {
+  if (!pendingDeleteBoard) {
+    setDeleteBoardModalOpen(false);
+    return;
+  }
+  const target = pendingDeleteBoard;
+  setDeleteBoardModalOpen(false);
+  await deleteBoardById(target.id, target.projectId);
+}
+
+async function deleteBoardById(boardId, projectId) {
+  if (isBoardDeleting) return;
+  const scopedProjectId = projectId || activeProjectId || 'local-default';
+  const boards = getBoardsForProject(scopedProjectId);
+  const entryIndex = boards.findIndex((entry) => entry.id === boardId);
+  const entry = entryIndex >= 0 ? boards[entryIndex] : null;
+  if (!entry) {
+    setStatus('Board not found.', 1500);
+    updateDeleteBoardButton();
+    return;
+  }
 
   isBoardDeleting = true;
   updateDeleteBoardButton();
   try {
     cancelBoardEdit();
-    const boardId = activeEntry.id;
     await deleteGraphPayload(boardId);
-    boardIndex = boardIndex.filter((entry) => !(
-      entry.id === boardId
-      && (entry.projectId || null) === (projectId || null)
+    boardIndex = boardIndex.filter((row) => !(
+      row.id === boardId
+      && (row.projectId || null) === (scopedProjectId || null)
     ));
-    const remainingBoards = getBoardsForProject(projectId);
+    const remainingBoards = getBoardsForProject(scopedProjectId);
     validateBoardIndexInvariants();
 
-    if (remainingBoards.length) {
-      const nextIndex = Math.max(0, Math.min(activeIndex, remainingBoards.length - 1));
-      const nextBoardId = remainingBoards[nextIndex]?.id || remainingBoards[0].id;
-      await activateBoard(nextBoardId, { skipSave: true, projectId });
-    } else {
-      activeBoardId = null;
-      clearBoardViewForEmptyProject();
+    if (boardId === activeBoardId && (activeProjectId || 'local-default') === scopedProjectId) {
+      if (remainingBoards.length) {
+        const nextIndex = Math.max(0, Math.min(entryIndex, remainingBoards.length - 1));
+        const nextBoardId = remainingBoards[nextIndex]?.id || remainingBoards[0].id;
+        await activateBoard(nextBoardId, { skipSave: true, projectId: scopedProjectId });
+      } else {
+        activeBoardId = null;
+        clearBoardViewForEmptyProject();
+      }
     }
 
     await saveWorkspaceIndex();
@@ -6014,6 +6121,377 @@ function updateDeleteBoardButton() {
   els.btnDeleteBoard.setAttribute('aria-label', title);
 }
 
+function formatShortDate(value) {
+  if (!value) return 'Unknown date';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Unknown date';
+  return date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  });
+}
+
+function parseDateValue(value) {
+  if (!value) return 0;
+  const date = new Date(value);
+  const ts = date.getTime();
+  return Number.isNaN(ts) ? 0 : ts;
+}
+
+function resolveCatalogId(entry) {
+  const raw = entry?.catalogId || entry?.id || '';
+  return String(raw || '').trim();
+}
+
+function getLocalProjectForCatalog(catalogId) {
+  if (!catalogId) return null;
+  let best = null;
+  let bestTs = -1;
+  projectIndex.forEach((entry) => {
+    if (!entry?.remote || entry.remote.catalogId !== catalogId) return;
+    const ts = parseDateValue(entry.remote.updatedAt || entry.remote.publishedAt) || Number(entry.updatedAt || 0);
+    if (ts > bestTs) {
+      bestTs = ts;
+      best = entry;
+    }
+  });
+  return best;
+}
+
+function isCatalogUpdateAvailable(catalogMeta, localProject) {
+  if (!localProject?.remote) return false;
+  const remoteUpdated = parseDateValue(catalogMeta.updatedAt || catalogMeta.publishedAt);
+  const localUpdated = parseDateValue(localProject.remote.updatedAt || localProject.remote.publishedAt);
+  if (remoteUpdated && localUpdated) return remoteUpdated > localUpdated;
+  if (catalogMeta.version && localProject.remote.version) {
+    return catalogMeta.version !== localProject.remote.version;
+  }
+  if (catalogMeta.updatedAt && !localProject.remote.updatedAt) return true;
+  return false;
+}
+
+async function loadPublicCatalog(force = false) {
+  if (!PUBLIC_CATALOG_URL) {
+    publicCatalogStatus = 'disabled';
+    publicCatalogError = 'Public projects not configured.';
+    publicCatalogProjects = [];
+    renderDownloadPanel(els.downloadSearch?.value || '');
+    return;
+  }
+  const now = Date.now();
+  if (!force && publicCatalogLoadedAt && now - publicCatalogLoadedAt < 5 * 60 * 1000) {
+    return;
+  }
+  if (publicCatalogStatus === 'loading') return;
+  publicCatalogStatus = 'loading';
+  publicCatalogError = '';
+  renderDownloadPanel(els.downloadSearch?.value || '');
+  try {
+    const response = await fetch(PUBLIC_CATALOG_URL, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error(`Catalog request failed (${response.status}).`);
+    }
+    const payload = await response.json().catch(() => null);
+    const projects = Array.isArray(payload?.projects) ? payload.projects : [];
+    publicCatalogProjects = projects;
+    publicCatalogStatus = 'ready';
+    publicCatalogLoadedAt = Date.now();
+  } catch (err) {
+    publicCatalogStatus = 'error';
+    publicCatalogError = err?.message || 'Failed to load public projects.';
+    publicCatalogProjects = [];
+  } finally {
+    renderDownloadPanel(els.downloadSearch?.value || '');
+  }
+}
+
+async function downloadPublicProject(meta, options = {}) {
+  if (!IS_SERVER_MODE || forceClientMode) {
+    setStatus('Public project downloads require server mode.', 2000);
+    return;
+  }
+  const manifestUrl = String(meta?.manifestUrl || '').trim();
+  if (!manifestUrl) {
+    setStatus('Project manifest URL is missing.', 2000);
+    return;
+  }
+  const catalogId = String(options.catalogId || '').trim();
+  const baseProjectId = String(options.baseProjectId || '').trim();
+  try {
+    setStatus('Downloading project...', 0);
+    const response = await apiFetch('/api/public-projects/import', {
+      method: 'POST',
+      body: {
+        manifestUrl,
+        catalogId: catalogId || undefined,
+        rename: String(meta?.name || '').trim() || undefined,
+        baseProjectId: baseProjectId || undefined
+      }
+    });
+    await refreshProjectsFromServer();
+    const newProjectId = response?.project?.id || '';
+    if (newProjectId) {
+      await activateProject(newProjectId, { force: true, createBoardIfEmpty: false });
+    }
+    renderDownloadPanel(els.downloadSearch?.value || '');
+    setStatus(baseProjectId ? 'Project update downloaded.' : 'Project downloaded.', 2000);
+  } catch (err) {
+    console.warn('Public project download failed', err);
+    setStatus(`Project download failed: ${err?.message || 'unknown error'}.`, 2400);
+  }
+}
+
+function normalizeProjectMeta(entry) {
+  const tags = Array.isArray(entry?.tags) ? entry.tags.filter(Boolean) : [];
+  return {
+    id: String(entry?.id || ''),
+    name: String(entry?.name || 'Untitled Project'),
+    description: String(entry?.description || 'No description provided.'),
+    publisher: String(entry?.publisher || 'Unknown publisher'),
+    publishedAt: entry?.publishedAt || null,
+    updatedAt: entry?.updatedAt || null,
+    version: String(entry?.version || ''),
+    manifestUrl: String(entry?.manifestUrl || ''),
+    coverUrl: String(entry?.coverUrl || ''),
+    tags
+  };
+}
+
+function mapProjectEntry(entry) {
+  const tags = Array.isArray(entry?.tags) ? entry.tags.filter(Boolean) : [];
+  const remote = entry?.remote && typeof entry.remote === 'object'
+    ? { ...entry.remote }
+    : null;
+  return {
+    id: String(entry?.id || ''),
+    name: String(entry?.name || 'Untitled Project'),
+    updatedAt: Number(entry?.updatedAt || Date.now()),
+    description: String(entry?.description || ''),
+    publisher: String(entry?.publisher || ''),
+    publishedAt: entry?.publishedAt || null,
+    version: String(entry?.version || ''),
+    coverUrl: String(entry?.coverUrl || ''),
+    tags,
+    remote
+  };
+}
+
+async function exportProjectById(projectId) {
+  const targetProjectId = boardScopeProjectId(projectId);
+  if (!targetProjectId) {
+    setStatus('No project selected.', 1600);
+    return;
+  }
+  const boards = getBoardsForProject(targetProjectId);
+  if (!boards.length) {
+    setStatus('No boards in this project to export.', 1800);
+    return;
+  }
+  try {
+    if ((activeProjectId || 'local-default') === targetProjectId) {
+      await saveActiveGraph();
+    }
+    const projectEntry = projectIndex.find((entry) => entry.id === targetProjectId) || { id: targetProjectId };
+    const meta = normalizeProjectMeta(projectEntry);
+    const boardPayloads = await Promise.all(boards.map(async (board) => {
+      const payload = await loadGraphPayloadForProject(board.id, targetProjectId);
+      return {
+        id: board.id,
+        name: board.name || 'Untitled',
+        updatedAt: board.updatedAt || null,
+        payload: payload ? scrubExportPayload(payload) : null
+      };
+    }));
+    const exportedBoards = boardPayloads.filter((entry) => entry.payload);
+    if (!exportedBoards.length) {
+      setStatus('Unable to export project boards.', 1800);
+      return;
+    }
+    const payload = {
+      project: meta,
+      boards: exportedBoards
+    };
+    const filename = `${meta.name.replace(/\s+/g, '-').toLowerCase() || 'project'}.json`;
+    downloadJson(filename, payload);
+    setStatus('Project exported.');
+  } catch (err) {
+    console.warn('Project export failed', err);
+    setStatus('Project export failed.', 1800);
+  }
+}
+
+async function loadGraphPayloadForProject(graphId, projectId) {
+  if (!graphId) return null;
+  const targetProjectId = boardScopeProjectId(projectId);
+  if (await ensureServerMode()) {
+    try {
+      if (!targetProjectId) return null;
+      const payload = await apiFetch(`/api/projects/${encodeURIComponent(targetProjectId)}/boards/${encodeURIComponent(graphId)}`);
+      return payload?.board || null;
+    } catch (err) {
+      return null;
+    }
+  }
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(WORKSPACE_STORE, 'readonly');
+    const request = tx.objectStore(WORKSPACE_STORE).get(graphPayloadKey(targetProjectId, graphId));
+    request.onsuccess = () => resolve(request.result?.payload || null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function buildDownloadCard(entry) {
+  const meta = normalizeProjectMeta(entry);
+  const catalogId = resolveCatalogId(entry);
+  const localProject = getLocalProjectForCatalog(catalogId);
+  const isDownloaded = Boolean(localProject);
+  const updateAvailable = isDownloaded && isCatalogUpdateAvailable(meta, localProject);
+  const serverEnabled = IS_SERVER_MODE && !forceClientMode;
+  const card = document.createElement('div');
+  card.className = 'download-card';
+
+  const title = document.createElement('div');
+  title.className = 'download-card-title';
+  title.textContent = meta.name || 'Untitled Project';
+
+  const desc = document.createElement('div');
+  desc.className = 'download-card-desc';
+  desc.textContent = meta.description;
+
+  const publisher = document.createElement('div');
+  publisher.className = 'download-card-publisher';
+  publisher.textContent = `Publisher: ${meta.publisher}`;
+
+  const metaLine = document.createElement('div');
+  metaLine.className = 'download-card-meta-line';
+  const metaParts = [];
+  if (meta.version) metaParts.push(`v${meta.version}`);
+  if (meta.tags.length) metaParts.push(meta.tags.slice(0, 3).join(', '));
+  if (metaParts.length) {
+    metaLine.textContent = metaParts.join(' • ');
+  }
+
+  const status = document.createElement('div');
+  status.className = 'download-card-status';
+  if (isDownloaded) {
+    status.textContent = updateAvailable ? 'Update available' : 'Up to date';
+    if (updateAvailable) status.classList.add('is-update');
+  } else {
+    status.textContent = 'Not downloaded';
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'download-card-actions';
+  const button = document.createElement('button');
+  button.className = 'btn download-card-btn';
+  button.type = 'button';
+  if (!serverEnabled) {
+    button.textContent = 'Server mode required';
+    button.disabled = true;
+  } else if (!meta.manifestUrl) {
+    button.textContent = 'Unavailable';
+    button.disabled = true;
+  } else if (!isDownloaded) {
+    button.textContent = 'Download';
+  } else if (updateAvailable) {
+    button.textContent = 'Download update';
+  } else {
+    button.textContent = 'Up to date';
+    button.disabled = true;
+  }
+  button.addEventListener('click', () => {
+    const baseProjectId = isDownloaded ? localProject?.id || '' : '';
+    void downloadPublicProject(meta, { catalogId, baseProjectId });
+  });
+  actions.appendChild(button);
+
+  const publishDay = document.createElement('div');
+  publishDay.className = 'download-card-date';
+  const primaryDate = meta.publishedAt || meta.updatedAt;
+  publishDay.textContent = `Publish Day: ${formatShortDate(primaryDate)}`;
+
+  card.appendChild(title);
+  card.appendChild(desc);
+  card.appendChild(publisher);
+  if (metaLine.textContent) {
+    card.appendChild(metaLine);
+  }
+  card.appendChild(status);
+  card.appendChild(actions);
+  card.appendChild(publishDay);
+  return card;
+}
+
+function renderDownloadPanel(filter = '') {
+  if (!els.downloadGrid) return;
+  const normalized = String(filter || '').trim().toLowerCase();
+  if (!PUBLIC_CATALOG_URL) {
+    els.downloadGrid.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'download-empty';
+    empty.textContent = 'Public projects are not configured for this app.';
+    els.downloadGrid.appendChild(empty);
+    return;
+  }
+  if (publicCatalogStatus === 'loading') {
+    els.downloadGrid.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'download-empty';
+    empty.textContent = 'Loading public projects...';
+    els.downloadGrid.appendChild(empty);
+    return;
+  }
+  if (publicCatalogStatus === 'error') {
+    els.downloadGrid.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'download-empty';
+    empty.textContent = publicCatalogError || 'Unable to load public projects.';
+    els.downloadGrid.appendChild(empty);
+    return;
+  }
+  const projects = publicCatalogProjects
+    .filter((entry) => {
+      if (!normalized) return true;
+      const meta = normalizeProjectMeta(entry);
+      const haystack = [
+        meta.name,
+        meta.description,
+        meta.publisher,
+        meta.version,
+        ...(meta.tags || [])
+      ].join(' ').toLowerCase();
+      return haystack.includes(normalized);
+    })
+    .sort((a, b) => (new Date(b?.updatedAt || 0).getTime()) - (new Date(a?.updatedAt || 0).getTime()));
+  els.downloadGrid.innerHTML = '';
+  if (!projects.length) {
+    const empty = document.createElement('div');
+    empty.className = 'download-empty';
+    empty.textContent = normalized ? 'No projects match your search.' : 'No projects available.';
+    els.downloadGrid.appendChild(empty);
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  projects.forEach((entry) => frag.appendChild(buildDownloadCard(entry)));
+  els.downloadGrid.appendChild(frag);
+}
+
+function setDownloadPanelOpen(open) {
+  if (!els.downloadOverlay) return;
+  const isOpen = Boolean(open);
+  els.downloadOverlay.hidden = !isOpen;
+  if (isOpen) {
+    if (els.downloadSearch) {
+      els.downloadSearch.value = '';
+      els.downloadSearch.focus();
+    }
+    void loadPublicCatalog(true);
+    renderDownloadPanel('');
+  }
+}
+
 function isDesktopBridgeAvailable() {
   return Boolean(DESKTOP_BRIDGE && typeof DESKTOP_BRIDGE.getRuntimeInfo === 'function');
 }
@@ -6235,11 +6713,7 @@ async function restoreServerWorkspace() {
     }
     if (!projects.length) return false;
 
-    projectIndex = projects.map((entry) => ({
-      id: entry.id,
-      name: entry.name || 'Untitled Project',
-      updatedAt: entry.updatedAt || Date.now()
-    }));
+    projectIndex = projects.map((entry) => mapProjectEntry(entry)).filter((entry) => entry.id);
 
     let projectId = loadActiveProjectId();
     if (!projectIndex.some((entry) => entry.id === projectId)) {
@@ -6314,11 +6788,7 @@ async function restoreWorkspace() {
       return true;
     }
     projectIndex = Array.isArray(index.projects) && index.projects.length
-      ? index.projects.map((entry) => ({
-        id: entry.id,
-        name: entry.name || 'Local Project',
-        updatedAt: entry.updatedAt || Date.now()
-      }))
+      ? index.projects.map((entry) => mapProjectEntry(entry)).filter((entry) => entry.id)
       : [{ id: 'local-default', name: 'Local Project', updatedAt: Date.now() }];
     activeProjectId = index.activeProjectId || projectIndex[0]?.id || null;
     if (!projectIndex.some((entry) => entry.id === activeProjectId)) {

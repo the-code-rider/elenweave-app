@@ -33,6 +33,7 @@ HOST=0.0.0.0 PORT=8080 npm run server
 ELENWEAVE_DATA_DIR=/path/to/shared-store npm run server
 OPENAI_API_KEY=... GEMINI_API_KEY=... npm run server
 ELENWEAVE_EXPERIMENTAL_HAND_CONTROLS=off npm run server
+ELENWEAVE_PUBLIC_CATALOG_URL=https://example.com/catalog.json npm run server
 ```
 
 CLI equivalents:
@@ -165,6 +166,81 @@ Native seed folders may include optional `seed.config.json` with read-only defau
 - `POST /api/projects/:projectId/assets` (JSON body: `filename`, `mimeType`, `base64`, optional `category`)
 - `GET /api/projects/:projectId/assets/:assetId`
 - `DELETE /api/projects/:projectId/assets/:assetId`
+
+### Public projects (download/import)
+
+- `POST /api/public-projects/import` (server mode only)
+
+Body:
+
+```json
+{
+  "manifestUrl": "https://example.com/project-manifest.json",
+  "catalogId": "catalog-project-id",
+  "rename": "Optional display name",
+  "baseProjectId": "Optional local project id to supersede"
+}
+```
+
+Notes:
+
+- Remote downloads require HTTPS URLs (except `http://localhost` and `http://127.0.0.1` for local dev).
+- Files are size-limited (manifest 2 MB, boards 8 MB, assets 50 MB).
+- Imported assets are copied into the local project store and remapped in node payloads.
+
+## Public catalog + manifest schema
+
+Catalog JSON example:
+
+```json
+{
+  "projects": [
+    {
+      "id": "catalog-project-id",
+      "name": "Project name",
+      "description": "Short description",
+      "publisher": "Publisher name",
+      "publishedAt": "2026-01-01T00:00:00Z",
+      "updatedAt": "2026-01-10T00:00:00Z",
+      "version": "1.0.0",
+      "coverUrl": "https://example.com/cover.png",
+      "tags": ["tag-a", "tag-b"],
+      "manifestUrl": "https://example.com/project-manifest.json"
+    }
+  ]
+}
+```
+
+Manifest JSON example:
+
+```json
+{
+  "id": "catalog-project-id",
+  "name": "Project name",
+  "description": "Short description",
+  "publisher": "Publisher name",
+  "publishedAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-10T00:00:00Z",
+  "version": "1.0.0",
+  "coverUrl": "https://example.com/cover.png",
+  "tags": ["tag-a", "tag-b"],
+  "assets": [
+    { "id": "asset-1", "name": "logo", "mimeType": "image/png", "file": "assets/logo.png" }
+  ],
+  "boards": [
+    { "name": "Intro board", "file": "boards/intro.json" }
+  ]
+}
+```
+
+Boards can be inlined:
+
+```json
+{
+  "name": "Intro board",
+  "payload": { "nodes": [], "edges": [], "nodeOrder": [], "notifications": [] }
+}
+```
 
 ### Local AI proxy (server-side keys)
 

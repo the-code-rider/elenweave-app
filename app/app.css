@@ -375,6 +375,11 @@ html[data-theme="light"] #projectSelect option {
     stroke-linejoin: round;
 }
 
+.board-action-btn .btn-icon-delete {
+    fill: currentColor;
+    stroke: none;
+}
+
 #btnSortBoards .btn-icon-sort {
     fill: currentColor;
     stroke: none;
@@ -533,8 +538,15 @@ html[data-theme="light"] .desktop-field input {
     );
 }
 
+.panel-footer-actions {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+}
+
 .panel-footer .settings-toggle {
-    width: 100%;
+    flex: 1 1 0;
+    width: auto;
     border-color: color-mix(in oklab, var(--app-accent) 45%, var(--app-border));
     background: linear-gradient(
         180deg,
@@ -557,6 +569,43 @@ html[data-theme="light"] .desktop-field input {
         color-mix(in oklab, var(--app-accent) 28%, var(--app-panel)) 52%,
         color-mix(in oklab, var(--app-accent) 22%, var(--app-panel))
     );
+}
+
+.panel-footer .settings-toggle {
+    display: grid;
+    place-items: center;
+    padding-left: 10px;
+    padding-right: 10px;
+}
+
+.panel-footer .footer-download {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border-color: color-mix(in oklab, var(--app-accent) 34%, var(--app-border));
+    background: color-mix(in oklab, var(--app-panel) 88%, transparent);
+    color: var(--app-text);
+}
+
+.panel-footer .footer-download:hover {
+    border-color: color-mix(in oklab, var(--app-accent) 58%, var(--app-border));
+}
+
+.settings-toggle-icon {
+    width: 18px;
+    height: 18px;
+    display: block;
+    fill: currentColor;
+}
+
+.footer-download-icon {
+    width: 18px;
+    height: 18px;
+    display: block;
+    fill: currentColor;
 }
 
 .settings-panel .btn {
@@ -816,6 +865,20 @@ html[data-theme="light"] .panel-footer .settings-toggle {
 
 html[data-theme="light"] .panel-footer .settings-toggle:hover {
     background: color-mix(in oklab, var(--app-accent) 88%, #ffffff 12%);
+}
+
+html[data-theme="light"] .panel-footer .footer-download {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: color-mix(in oklab, var(--app-border) 58%, rgba(255, 255, 255, 0.8));
+    color: var(--app-text);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.85),
+        inset 0 -1px 0 rgba(18, 24, 38, 0.12),
+        0 10px 16px rgba(18, 24, 38, 0.12);
+}
+
+html[data-theme="light"] .panel-footer .footer-download:hover {
+    border-color: color-mix(in oklab, var(--app-accent) 45%, var(--app-border));
 }
 
 .panel-section--tools .tools-body[hidden] {
@@ -1122,6 +1185,286 @@ html[data-theme="light"] .modal-backdrop {
     justify-content: flex-end;
     gap: 10px;
 }
+
+.delete-modal .delete-confirm {
+    border-color: color-mix(in oklab, var(--app-warning) 70%, var(--app-border));
+    background: color-mix(in oklab, var(--app-warning) 24%, var(--app-panel));
+    color: var(--app-text);
+}
+
+.delete-modal .delete-confirm:hover {
+    border-color: color-mix(in oklab, var(--app-warning) 90%, var(--app-border));
+    background: color-mix(in oklab, var(--app-warning) 32%, var(--app-panel));
+}
+
+html[data-theme="light"] .delete-modal .delete-confirm {
+    background: color-mix(in oklab, var(--app-warning) 30%, #ffffff);
+    border-color: color-mix(in oklab, var(--app-warning) 75%, rgba(18, 24, 38, 0.2));
+    color: #5a3b12;
+}
+
+.download-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 12;
+    display: grid;
+    place-items: center;
+    padding: 22px;
+}
+
+.download-overlay[hidden] {
+    display: none;
+}
+
+.download-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(2, 8, 16, 0.68);
+    backdrop-filter: blur(2px);
+}
+
+html[data-theme="light"] .download-backdrop {
+    background: rgba(8, 16, 26, 0.35);
+}
+
+.download-modal {
+    position: relative;
+    width: min(980px, 100%);
+    max-height: min(640px, 88%);
+    min-height: 0;
+    border-radius: 18px;
+    border: 1px solid var(--app-border);
+    background: color-mix(in oklab, var(--app-panel) 92%, transparent);
+    box-shadow: var(--app-shadow);
+    padding: 18px;
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+    gap: 16px;
+    overflow: hidden;
+}
+
+.download-modal .btn {
+    padding: 6px 10px;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    border: 1px solid color-mix(in oklab, var(--app-border) 70%, rgba(255, 255, 255, 0.12));
+    background: transparent;
+    color: var(--app-text);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.35);
+}
+
+.download-modal .btn:hover {
+    border-color: color-mix(in oklab, var(--app-accent) 60%, var(--app-border));
+    background: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--app-panel) 78%, rgba(255, 255, 255, 0.08)),
+        color-mix(in oklab, var(--app-panel) 92%, rgba(0, 0, 0, 0.18))
+    );
+}
+
+.download-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.download-title {
+    font-size: 1rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--app-accent);
+}
+
+.download-sub {
+    margin-top: 6px;
+    font-size: 0.75rem;
+    color: var(--app-muted);
+}
+
+.download-search {
+    display: flex;
+    justify-content: center;
+}
+
+.download-search input {
+    width: 100%;
+    max-width: 640px;
+    min-height: 42px;
+    border-radius: 12px;
+    border: 1px solid color-mix(in oklab, var(--app-border) 70%, rgba(255, 255, 255, 0.12));
+    background: color-mix(in oklab, var(--app-panel) 86%, transparent);
+    color: var(--app-text);
+    padding: 8px 12px;
+    font-size: 0.8rem;
+}
+
+.download-search input:focus {
+    outline: 2px solid color-mix(in oklab, var(--app-accent) 60%, transparent);
+    outline-offset: 1px;
+}
+
+.download-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 4px;
+    scrollbar-width: none;
+    align-items: stretch;
+    min-height: 0;
+    max-height: 100%;
+}
+
+.download-grid::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+}
+
+.download-card {
+    border-radius: 14px;
+    border: 1px solid color-mix(in oklab, var(--app-border) 70%, rgba(255, 255, 255, 0.12));
+    background: color-mix(in oklab, var(--app-panel) 86%, transparent);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 190px;
+    max-height: 220px;
+    overflow: hidden;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.12),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.35);
+}
+
+.download-card-title {
+    font-size: 0.78rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--app-text);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.download-card-desc {
+    font-size: 0.7rem;
+    color: var(--app-text);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+.download-card-publisher {
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--app-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.download-card-meta-line {
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    color: var(--app-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.download-card-status {
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--app-muted);
+}
+
+.download-card-status.is-update {
+    color: color-mix(in oklab, var(--app-warning) 80%, var(--app-text) 20%);
+}
+
+.download-card-date {
+    font-size: 0.66rem;
+    color: var(--app-muted);
+    margin-top: 6px;
+}
+
+.download-card-actions {
+    margin-top: auto;
+    display: flex;
+    justify-content: center;
+    width: 100%;
+}
+
+.download-card-btn {
+    min-height: 30px;
+    padding: 4px 12px;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    width: 100%;
+    border: 1px solid color-mix(in oklab, var(--app-border) 70%, rgba(255, 255, 255, 0.12));
+    background: transparent;
+    color: var(--app-text);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.35);
+}
+
+.download-card-btn:hover {
+    border-color: color-mix(in oklab, var(--app-accent) 60%, var(--app-border));
+}
+
+.download-empty {
+    border-radius: 14px;
+    border: 1px dashed color-mix(in oklab, var(--app-border) 55%, transparent);
+    padding: 18px;
+    text-align: center;
+    color: var(--app-muted);
+    font-size: 0.75rem;
+}
+
+html[data-theme="light"] .download-modal {
+    background: color-mix(in oklab, #ffffff 92%, rgba(255, 255, 255, 0.6));
+    border-color: color-mix(in oklab, var(--app-border) 70%, rgba(255, 255, 255, 0.85));
+}
+
+html[data-theme="light"] .download-modal .btn {
+    border-color: color-mix(in oklab, var(--app-border) 60%, rgba(255, 255, 255, 0.75));
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        inset 0 -1px 0 rgba(18, 24, 38, 0.12);
+}
+
+html[data-theme="light"] .download-search input {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: color-mix(in oklab, var(--app-border) 60%, rgba(255, 255, 255, 0.8));
+}
+
+html[data-theme="light"] .download-card {
+    background: rgba(255, 255, 255, 0.92);
+    border-color: color-mix(in oklab, var(--app-border) 60%, rgba(255, 255, 255, 0.8));
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        inset 0 -1px 0 rgba(18, 24, 38, 0.12);
+}
+
+html[data-theme="light"] .download-card-btn {
+    border-color: color-mix(in oklab, var(--app-border) 60%, rgba(255, 255, 255, 0.7));
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        inset 0 -1px 0 rgba(18, 24, 38, 0.12);
+}
+
 
 .board-list {
     flex: 1 1 auto;

@@ -16,6 +16,7 @@ const INDEX_FILE = path.join(DATA_ROOT, 'index.json');
 const SEED_STATE_FILE = path.join(DATA_ROOT, '.seed-state.json');
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number.parseInt(process.env.PORT || '8787', 10);
+const PUBLIC_CATALOG_URL = String(process.env.ELENWEAVE_PUBLIC_CATALOG_URL || '').trim();
 const RUNTIME_MODE_VALUES = new Set(['server', 'client']);
 const RUNTIME_STORAGE_MODE = (() => {
   const raw = String(
@@ -98,6 +99,10 @@ const READ_ONLY_CONFIG = {
   fork: SEED_OPTIONS.readOnlyFork
 };
 
+const MAX_PUBLIC_MANIFEST_BYTES = 2 * 1024 * 1024;
+const MAX_PUBLIC_BOARD_BYTES = 8 * 1024 * 1024;
+const MAX_PUBLIC_ASSET_BYTES = 50 * 1024 * 1024;
+
 function resolveDataRoot() {
   const fromEnv = String(process.env.ELENWEAVE_DATA_DIR || '').trim();
   if (fromEnv) return path.resolve(fromEnv);
@@ -137,6 +142,81 @@ function parseSeedOptions() {
     hasReadOnlyModeOverride: Boolean(readOnlyModeRaw),
     hasReadOnlyForkOverride: Boolean(readOnlyForkRaw)
   };
+}
+
+function sanitizeTagList(input) {
+  if (!Array.isArray(input)) return [];
+  return input.map((tag) => String(tag || '').trim()).filter(Boolean);
+}
+
+function sanitizeRemoteMeta(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const catalogId = String(raw.catalogId || '').trim();
+  if (!catalogId) return null;
+  const manifestUrl = String(raw.manifestUrl || '').trim();
+  return {
+    catalogId,
+    manifestUrl,
+    version: String(raw.version || '').trim(),
+    updatedAt: raw.updatedAt || null,
+    publishedAt: raw.publishedAt || null,
+    description: String(raw.description || '').trim(),
+    publisher: String(raw.publisher || '').trim(),
+    coverUrl: String(raw.coverUrl || '').trim(),
+    tags: sanitizeTagList(raw.tags),
+    supersedesProjectId: String(raw.supersedesProjectId || '').trim() || null
+  };
+}
+
+function isAllowedRemoteUrl(value) {
+  let target = null;
+  try {
+    target = new URL(value);
+  } catch {
+    return false;
+  }
+  if (target.protocol === 'https:') return true;
+  if (target.protocol === 'http:' && (target.hostname === '127.0.0.1' || target.hostname === 'localhost')) {
+    return true;
+  }
+  return false;
+}
+
+function resolveRemoteUrl(baseUrl, ref) {
+  if (!ref) return '';
+  try {
+    return new URL(ref, baseUrl).toString();
+  } catch {
+    return '';
+  }
+}
+
+async function fetchRemoteBuffer(url, limitBytes) {
+  if (!isAllowedRemoteUrl(url)) {
+    throw new Error('Remote URL must be https.');
+  }
+  const response = await fetch(url, { method: 'GET' });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${url} (${response.status}).`);
+  }
+  const length = Number(response.headers.get('content-length') || 0);
+  if (limitBytes && length && length > limitBytes) {
+    throw new Error(`Remote file exceeds size limit (${length} bytes).`);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (limitBytes && buffer.length > limitBytes) {
+    throw new Error(`Remote file exceeds size limit (${buffer.length} bytes).`);
+  }
+  return buffer;
+}
+
+async function fetchRemoteJson(url, limitBytes) {
+  const buffer = await fetchRemoteBuffer(url, limitBytes);
+  try {
+    return JSON.parse(buffer.toString('utf8'));
+  } catch {
+    throw new Error('Invalid JSON from remote.');
+  }
 }
 
 function fileExists(filePath) {
@@ -310,7 +390,14 @@ function sanitizeProjectList(projects) {
     id: String(entry?.id || ''),
     name: String(entry?.name || 'Untitled Project'),
     createdAt: Number(entry?.createdAt || nowTs()),
-    updatedAt: Number(entry?.updatedAt || nowTs())
+    updatedAt: Number(entry?.updatedAt || nowTs()),
+    description: String(entry?.description || ''),
+    publisher: String(entry?.publisher || ''),
+    publishedAt: entry?.publishedAt || null,
+    version: String(entry?.version || ''),
+    coverUrl: String(entry?.coverUrl || ''),
+    tags: sanitizeTagList(entry?.tags),
+    remote: sanitizeRemoteMeta(entry?.remote)
   })).filter((entry) => isValidId(entry.id));
 }
 
@@ -450,6 +537,13 @@ async function loadProjectMeta(projectId) {
     name: String(parsed.name || 'Untitled Project'),
     createdAt: Number(parsed.createdAt || nowTs()),
     updatedAt: Number(parsed.updatedAt || nowTs()),
+    description: String(parsed.description || ''),
+    publisher: String(parsed.publisher || ''),
+    publishedAt: parsed.publishedAt || null,
+    version: String(parsed.version || ''),
+    coverUrl: String(parsed.coverUrl || ''),
+    tags: sanitizeTagList(parsed.tags),
+    remote: sanitizeRemoteMeta(parsed.remote),
     boards: sanitizeBoardList(parsed.boards)
   };
 }
@@ -460,6 +554,13 @@ async function saveProjectMeta(projectId, meta) {
     name: String(meta?.name || 'Untitled Project'),
     createdAt: Number(meta?.createdAt || nowTs()),
     updatedAt: Number(meta?.updatedAt || nowTs()),
+    description: String(meta?.description || ''),
+    publisher: String(meta?.publisher || ''),
+    publishedAt: meta?.publishedAt || null,
+    version: String(meta?.version || ''),
+    coverUrl: String(meta?.coverUrl || ''),
+    tags: sanitizeTagList(meta?.tags),
+    remote: sanitizeRemoteMeta(meta?.remote),
     boards: sanitizeBoardList(meta?.boards)
   };
   await writeJsonAtomic(projectMetaPath(projectId), payload);
@@ -861,6 +962,27 @@ async function touchProjectIndex(projectId, patch = {}) {
     if (patch.name) existing.name = String(patch.name);
     if (patch.createdAt) existing.createdAt = Number(patch.createdAt);
     existing.updatedAt = Number(patch.updatedAt || nowTs());
+    if (Object.prototype.hasOwnProperty.call(patch, 'description')) {
+      existing.description = String(patch.description || '');
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'publisher')) {
+      existing.publisher = String(patch.publisher || '');
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'publishedAt')) {
+      existing.publishedAt = patch.publishedAt || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'version')) {
+      existing.version = String(patch.version || '');
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'coverUrl')) {
+      existing.coverUrl = String(patch.coverUrl || '');
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'tags')) {
+      existing.tags = sanitizeTagList(patch.tags);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'remote')) {
+      existing.remote = sanitizeRemoteMeta(patch.remote);
+    }
     await writeIndex(index);
   });
 }
@@ -879,6 +1001,13 @@ async function createProject(name) {
       name: String(name || 'Untitled Project'),
       createdAt,
       updatedAt: createdAt,
+      description: '',
+      publisher: '',
+      publishedAt: null,
+      version: '',
+      coverUrl: '',
+      tags: [],
+      remote: null,
       boards: []
     };
 
@@ -891,7 +1020,14 @@ async function createProject(name) {
       id,
       name: projectMeta.name,
       createdAt,
-      updatedAt: createdAt
+      updatedAt: createdAt,
+      description: projectMeta.description,
+      publisher: projectMeta.publisher,
+      publishedAt: projectMeta.publishedAt,
+      version: projectMeta.version,
+      coverUrl: projectMeta.coverUrl,
+      tags: projectMeta.tags,
+      remote: projectMeta.remote
     });
     await writeIndex(index);
     return projectMeta;
@@ -943,6 +1079,159 @@ function parseInitialBoardPayload(body) {
     return body;
   }
   return null;
+}
+
+function normalizePublicManifest(raw = {}) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const project = source.project && typeof source.project === 'object' ? source.project : {};
+  const name = String(source.name || project.name || source.id || 'Imported Project').trim() || 'Imported Project';
+  const description = String(source.description || project.description || '').trim();
+  const publisher = String(source.publisher || project.publisher || '').trim();
+  const publishedAt = source.publishedAt || project.publishedAt || null;
+  const updatedAt = source.updatedAt || project.updatedAt || null;
+  const version = String(source.version || project.version || '').trim();
+  const coverUrl = String(source.coverUrl || project.coverUrl || '').trim();
+  const tags = sanitizeTagList(source.tags || project.tags);
+  const catalogId = String(source.catalogId || source.id || project.id || '').trim();
+  const boards = Array.isArray(source.boards)
+    ? source.boards
+    : Array.isArray(project.boards)
+    ? project.boards
+    : [];
+  const assets = Array.isArray(source.assets)
+    ? source.assets
+    : Array.isArray(project.assets)
+    ? project.assets
+    : [];
+  return {
+    name,
+    description,
+    publisher,
+    publishedAt,
+    updatedAt,
+    version,
+    coverUrl,
+    tags,
+    catalogId,
+    boards,
+    assets
+  };
+}
+
+function remapBoardAssets(payload, assetIdMap) {
+  if (!payload || typeof payload !== 'object') return payload;
+  if (!Array.isArray(payload.nodes)) return payload;
+  const map = assetIdMap || new Map();
+  payload.nodes = payload.nodes.map((node) => {
+    if (!node || typeof node !== 'object') return node;
+    const data = node.data && typeof node.data === 'object' ? { ...node.data } : null;
+    if (!data || !data.assetId) return node;
+    const nextId = map.get(String(data.assetId)) || null;
+    if (!nextId) return node;
+    data.assetId = nextId;
+    delete data.src;
+    delete data.remoteSrc;
+    delete data.remoteProjectId;
+    return { ...node, data };
+  });
+  return payload;
+}
+
+async function importPublicProject(manifestUrl, options = {}) {
+  const manifest = normalizePublicManifest(await fetchRemoteJson(manifestUrl, MAX_PUBLIC_MANIFEST_BYTES));
+  const projectMeta = await createProject(options.rename || manifest.name || 'Imported Project');
+  const projectId = projectMeta.id;
+
+  const remoteMeta = sanitizeRemoteMeta({
+    catalogId: options.catalogId || manifest.catalogId || '',
+    manifestUrl,
+    version: manifest.version,
+    updatedAt: manifest.updatedAt,
+    publishedAt: manifest.publishedAt,
+    description: manifest.description,
+    publisher: manifest.publisher,
+    coverUrl: manifest.coverUrl,
+    tags: manifest.tags,
+    supersedesProjectId: options.baseProjectId || ''
+  });
+
+  try {
+    const assetIdMap = new Map();
+    for (const asset of manifest.assets) {
+      const ref = String(asset?.file || asset?.url || '').trim();
+      if (!ref) continue;
+      const assetUrl = resolveRemoteUrl(manifestUrl, ref);
+      if (!assetUrl) continue;
+      const buffer = await fetchRemoteBuffer(assetUrl, MAX_PUBLIC_ASSET_BYTES);
+      const saved = await createProjectAsset(projectId, {
+        filename: String(asset?.name || path.basename(ref) || 'asset'),
+        mimeType: String(asset?.mimeType || asset?.type || '').trim(),
+        category: asset?.category ? String(asset.category) : null,
+        buffer
+      });
+      if (saved?.id && asset?.id) {
+        assetIdMap.set(String(asset.id), saved.id);
+      }
+    }
+
+    const boardSummaries = [];
+    for (const board of manifest.boards) {
+      const ref = String(board?.file || board?.url || '').trim();
+      let payload = null;
+      if (board?.payload && typeof board.payload === 'object') {
+        payload = board.payload;
+      } else if (ref) {
+        const boardUrl = resolveRemoteUrl(manifestUrl, ref);
+        if (!boardUrl) continue;
+        payload = await fetchRemoteJson(boardUrl, MAX_PUBLIC_BOARD_BYTES);
+      }
+      if (!payload || typeof payload !== 'object') continue;
+
+      const boardId = nanoid(16);
+      const namedPayload = {
+        ...payload,
+        id: boardId,
+        name: String(board?.name || payload?.name || 'Untitled')
+      };
+      remapBoardAssets(namedPayload, assetIdMap);
+      await saveBoardPayload(projectId, boardId, namedPayload);
+      boardSummaries.push({
+        id: boardId,
+        name: namedPayload.name || 'Untitled',
+        createdAt: nowTs(),
+        updatedAt: nowTs()
+      });
+    }
+
+    const meta = await loadProjectMeta(projectId);
+    if (meta) {
+      meta.description = manifest.description || meta.description;
+      meta.publisher = manifest.publisher || meta.publisher;
+      meta.publishedAt = manifest.publishedAt || meta.publishedAt;
+      meta.version = manifest.version || meta.version;
+      meta.coverUrl = manifest.coverUrl || meta.coverUrl;
+      meta.tags = manifest.tags || meta.tags;
+      meta.remote = remoteMeta || meta.remote;
+      meta.updatedAt = nowTs();
+      meta.boards = boardSummaries;
+      await saveProjectMeta(projectId, meta);
+      await touchProjectIndex(projectId, {
+        name: meta.name,
+        updatedAt: meta.updatedAt,
+        description: meta.description,
+        publisher: meta.publisher,
+        publishedAt: meta.publishedAt,
+        version: meta.version,
+        coverUrl: meta.coverUrl,
+        tags: meta.tags,
+        remote: meta.remote
+      });
+    }
+    return meta;
+  } catch (err) {
+    await deleteProject(projectId).catch(() => {});
+    throw err;
+  }
 }
 
 async function createBoard(projectId, name, initialPayload = null) {
@@ -1479,6 +1768,46 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/public-projects/import') {
+    if (!IS_SERVER_RUNTIME) {
+      sendJson(res, 404, { error: 'ApiDisabled', message: 'API routes are disabled in client runtime mode.' });
+      return;
+    }
+    if (READ_ONLY_CONFIG.mode === 'all') {
+      sendReadOnlyError(res);
+      return;
+    }
+    try {
+      const body = await readJsonBody(req);
+      const manifestUrl = String(body?.manifestUrl || '').trim();
+      if (!manifestUrl) {
+        sendJson(res, 400, { error: 'InvalidRequest', message: 'Missing manifestUrl.' });
+        return;
+      }
+      const imported = await importPublicProject(manifestUrl, {
+        catalogId: String(body?.catalogId || '').trim(),
+        rename: String(body?.rename || '').trim(),
+        baseProjectId: String(body?.baseProjectId || '').trim()
+      });
+      if (!imported) {
+        sendJson(res, 400, { error: 'ImportFailed', message: 'Unable to import project.' });
+        return;
+      }
+      sendJson(res, 201, {
+        project: {
+          id: imported.id,
+          name: imported.name,
+          createdAt: imported.createdAt,
+          updatedAt: imported.updatedAt
+        },
+        remote: imported.remote || null
+      });
+    } catch (err) {
+      sendJson(res, 400, { error: 'ImportFailed', message: err?.message || 'Project import failed.' });
+    }
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/projects') {
     const index = await readIndex();
     sendJson(res, 200, { projects: index.projects });
@@ -1778,7 +2107,14 @@ async function handleApi(req, res, url) {
           id: project.id,
           name: project.name,
           createdAt: project.createdAt,
-          updatedAt: project.updatedAt
+          updatedAt: project.updatedAt,
+          description: project.description || '',
+          publisher: project.publisher || '',
+          publishedAt: project.publishedAt || null,
+          version: project.version || '',
+          coverUrl: project.coverUrl || '',
+          tags: project.tags || [],
+          remote: project.remote || null
         },
         boards: sanitizeBoardList(project.boards)
       });
@@ -1905,7 +2241,8 @@ async function sendFile(res, filePath) {
       serverBase: '',
       seedReadOnlyMode: inServerMode ? READ_ONLY_CONFIG.mode : 'off',
       seedReadOnlyProjectIds: inServerMode ? Array.from(READ_ONLY_CONFIG.projectIds) : [],
-      readOnlyFork: inServerMode ? READ_ONLY_CONFIG.fork : 'off'
+      readOnlyFork: inServerMode ? READ_ONLY_CONFIG.fork : 'off',
+      publicProjectsCatalogUrl: PUBLIC_CATALOG_URL
     });
     return;
   }
