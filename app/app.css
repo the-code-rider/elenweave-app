@@ -2184,6 +2184,35 @@ html[data-theme="light"] .input-bar.is-ai-busy {
     height: 100%;
 }
 
+.ew-html-preview {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.ew-html-preview-body {
+    position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    padding: 10px;
+}
+
+.ew-html-preview-frame {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: transparent;
+}
+
+.ew-html-preview-placeholder {
+    width: 100%;
+    color: var(--app-muted);
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
 .ew-markdown-body {
     display: flex;
     flex-direction: column;

@@ -19,6 +19,7 @@ import {
 import { render as MarkdownBlock } from './markdown-block.js';
 import { render as SvgBlock } from './svg-block.js';
 import { render as MermaidBlock } from './mermaid-block.js';
+import { render as HtmlPreview } from './html-preview.js';
 import {
   callOpenAI,
   callOpenAIMultimodal,
@@ -456,6 +457,16 @@ const COMPONENT_CONFIG = [
     ]
   },
   {
+    key: 'HtmlPreview',
+    label: 'HTML Preview',
+    component: 'HtmlPreview',
+    size: { w: 480, h: 320 },
+    fields: [
+      { key: 'title', label: 'Title', type: 'text', placeholder: 'HTML Preview' },
+      { key: 'html', label: 'HTML', type: 'textarea', placeholder: 'Paste HTML here. Use CodeSnippet to store/edit source.' }
+    ]
+  },
+  {
     key: 'OptionPicker',
     label: 'Option Picker',
     component: 'OptionPicker',
@@ -738,6 +749,7 @@ const AI_COMPONENT_SIZES = new Map(CHART_COMPONENT_SPECS.map((spec) => [spec.key
 AI_COMPONENT_SIZES.set('MarkdownBlock', { w: 360, h: 240 });
 AI_COMPONENT_SIZES.set('SvgBlock', { w: 380, h: 260 });
 AI_COMPONENT_SIZES.set('MermaidBlock', { w: 640, h: 420 });
+AI_COMPONENT_SIZES.set('HtmlPreview', { w: 480, h: 320 });
 const ASSET_URLS = new Map();
 
 const DB_NAME = 'elenweave_assets';
@@ -784,6 +796,7 @@ view.registerComponent('SparklineChart', { render: SparklineChart });
 view.registerComponent('MarkdownBlock', { render: MarkdownBlock });
 view.registerComponent('SvgBlock', { render: SvgBlock });
 view.registerComponent('MermaidBlock', { render: MermaidBlock });
+view.registerComponent('HtmlPreview', { render: HtmlPreview });
 
 initComponentSelect();
 applyContextMenuConfig();
@@ -1362,6 +1375,11 @@ async function buildComponentUpdate(config, values, node) {
       data.mermaid = values.mermaid ?? data.mermaid ?? '';
       break;
     }
+    case 'HtmlPreview': {
+      props.title = values.title || props.title || 'HTML Preview';
+      data.html = values.html ?? data.html ?? '';
+      break;
+    }
     case 'ImageViewer':
     case 'VideoPlayer':
     case 'AudioPlayer':
@@ -1513,6 +1531,7 @@ function renderForm(config, node) {
       if (
         config.key === 'AI'
         || config.key === 'HtmlText'
+        || config.key === 'HtmlPreview'
         || (config.key === 'CodeSnippet' && field.key === 'code')
       ) {
         wrap.classList.add('input-field--wide');
@@ -1676,6 +1695,10 @@ function hydrateFormValues(config, node) {
     case 'MermaidBlock':
       if (inputs.title) inputs.title.value = node?.props?.title || '';
       if (inputs.mermaid) inputs.mermaid.value = node?.data?.mermaid || '';
+      break;
+    case 'HtmlPreview':
+      if (inputs.title) inputs.title.value = node?.props?.title || '';
+      if (inputs.html) inputs.html.value = node?.data?.html || '';
       break;
     case 'ImageViewer':
     case 'VideoPlayer':
@@ -2473,6 +2496,47 @@ async function copyNodeContextTarget() {
   }
   setStatus('Copy failed.', 1600);
 }
+
+function findLinkedCodeSnippet(previewNodeId) {
+  if (!previewNodeId || !view?.graph) return null;
+  const incoming = view.graph.edges.filter((edge) => edge.to === previewNodeId);
+  for (let i = 0; i < incoming.length; i += 1) {
+    const edge = incoming[i];
+    const source = view.graph.getNode(edge.from);
+    if (source?.component === 'CodeSnippet') return source;
+  }
+  return null;
+}
+
+function getCodeSnippetSource(node) {
+  if (!node) return '';
+  const data = node.data || {};
+  if (data.code !== undefined && data.code !== null) return String(data.code);
+  if (node.text !== undefined && node.text !== null) return String(node.text);
+  if (node.props?.code !== undefined && node.props?.code !== null) return String(node.props.code);
+  return '';
+}
+
+function syncHtmlPreviewFromLinkedCode(previewNodeId) {
+  if (!previewNodeId || !view?.graph) return;
+  const preview = view.graph.getNode(previewNodeId);
+  if (!preview) return;
+  const source = findLinkedCodeSnippet(previewNodeId);
+  if (!source) {
+    setStatus('Link a CodeSnippet node to sync.', 1600);
+    return;
+  }
+  const html = getCodeSnippetSource(source);
+  const nextData = { ...(preview.data || {}), html };
+  view.updateNode(previewNodeId, { data: nextData });
+  if (String(html || '').trim()) {
+    setStatus('HTML preview updated.', 1200);
+  } else {
+    setStatus('No HTML found in linked CodeSnippet.', 1600);
+  }
+}
+
+window.elenweaveSyncHtmlPreview = syncHtmlPreviewFromLinkedCode;
 
 function editNodeContextTarget() {
   const nodeId = nodeContextMenu.nodeId;
@@ -3877,6 +3941,7 @@ function buildAiPrompt(message, context = {}) {
     '- When you add multiple new nodes, connect them with directional edges (from first to next).',
     '- Return JSON only; do not add prose outside the JSON.',
     '- If you need formatted text or code fences, use MarkdownBlock with data.markdown.',
+    '- When generating HTML (snippets, mini pages, embeds), add both a CodeSnippet node (data.code = HTML) and an HtmlPreview node (data.html = same HTML), and connect CodeSnippet -> HtmlPreview with an edge.',
     '- Ensure markdown strings are valid JSON (escape quotes and newlines).',
     '',
     'Component guidance (when to use each):',
@@ -4781,6 +4846,10 @@ function getAiComponentSpecs() {
         spec.props = { title: 'string' };
         spec.data = { mermaid: 'string' };
         break;
+      case 'HtmlPreview':
+        spec.props = { title: 'string' };
+        spec.data = { html: 'string' };
+        break;
       case 'ImageViewer':
         spec.props = { title: 'string', label: 'string', alt: 'string' };
         spec.data = { src: 'string', assetId: 'string' };
@@ -4810,6 +4879,7 @@ function getAiComponentGuidance() {
   return [
     '- HtmlText: short paragraphs, summaries, or bullets.',
     '- MarkdownBlock: formatted text (headings, lists, code fences).',
+    '- HtmlPreview: render raw HTML in a sandboxed preview (data.html). Link a CodeSnippet -> HtmlPreview when providing HTML source.',
     '- OptionPicker: single choice; MultiChoice: multiple selections.',
     '- TextInput: freeform text; DateTimeInput: date/time; SliderInput: numeric range.',
     '- Use OptionPicker/TextInput with data.aiFollowUp to ask the user a question and wait for their reply.',

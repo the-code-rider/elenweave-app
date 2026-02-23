@@ -1,0 +1,13 @@
+{
+  "name": "elenweave-publisher",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Publish Elenweave projects to an R2 public catalog.",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.750.0"
+  }
+}
