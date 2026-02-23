@@ -62,6 +62,7 @@ const els = {
   importFile: document.getElementById('importFile'),
   btnNew: document.getElementById('btnNew'),
   btnSortBoards: document.getElementById('btnSortBoards'),
+  btnShareBoard: document.getElementById('btnShareBoard'),
   btnDeleteBoard: document.getElementById('btnDeleteBoard'),
   componentPicker: document.getElementById('componentPicker'),
   inputBar: document.getElementById('inputBar'),
@@ -103,7 +104,13 @@ const els = {
   desktopSaveConfig: document.getElementById('desktopSaveConfig'),
   desktopRestartServer: document.getElementById('desktopRestartServer'),
   desktopOpenDataDir: document.getElementById('desktopOpenDataDir'),
-  desktopOpenConfigFile: document.getElementById('desktopOpenConfigFile')
+  desktopOpenConfigFile: document.getElementById('desktopOpenConfigFile'),
+  embedModal: document.getElementById('embedModal'),
+  embedClose: document.getElementById('embedClose'),
+  embedThemeSelect: document.getElementById('embedThemeSelect'),
+  embedLinkInput: document.getElementById('embedLinkInput'),
+  embedCopyBtn: document.getElementById('embedCopyBtn'),
+  embedNote: document.getElementById('embedNote')
 };
 
 const appShell = document.querySelector('.app-shell');
@@ -815,8 +822,7 @@ initApp();
 // els.btnNext.addEventListener('click', () => cycleBoard(1));
 
 els.btnNew.addEventListener('click', () => {
-  const nextIndex = getActiveProjectBoards().length + 1;
-  createBoard(`Board ${nextIndex}`);
+  createBoard();
 });
 
 els.btnSortBoards?.addEventListener('click', () => {
@@ -875,6 +881,7 @@ els.btnExport.addEventListener('click', () => exportBoard());
 els.btnFooterDownload?.addEventListener('click', () => setDownloadPanelOpen(true));
 els.btnImport.addEventListener('click', () => els.importFile.click());
 els.importFile.addEventListener('change', (e) => handleImportFile(e));
+els.btnShareBoard?.addEventListener('click', () => setEmbedModalOpen(true));
 els.deleteBoardClose?.addEventListener('click', () => setDeleteBoardModalOpen(false));
 els.deleteBoardCancel?.addEventListener('click', () => setDeleteBoardModalOpen(false));
 els.deleteBoardConfirm?.addEventListener('click', () => {
@@ -885,6 +892,14 @@ els.deleteBoardModal?.addEventListener('click', (event) => {
     setDeleteBoardModalOpen(false);
   }
 });
+els.embedClose?.addEventListener('click', () => setEmbedModalOpen(false));
+els.embedModal?.addEventListener('click', (event) => {
+  if (event.target === els.embedModal) {
+    setEmbedModalOpen(false);
+  }
+});
+els.embedThemeSelect?.addEventListener('change', () => updateEmbedPanel());
+els.embedCopyBtn?.addEventListener('click', () => copyEmbedLink());
 els.downloadClose?.addEventListener('click', () => setDownloadPanelOpen(false));
 els.downloadOverlay?.addEventListener('click', (event) => {
   if (!event.target || !(event.target instanceof HTMLElement)) return;
@@ -1002,6 +1017,10 @@ window.addEventListener('keydown', (event) => {
 });
 window.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
+  setEmbedModalOpen(false);
+});
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
   closeNodeContextMenu();
 });
 window.addEventListener('keydown', (event) => {
@@ -1040,6 +1059,9 @@ workspace.on('graph:active', (graph) => {
   hydrateMediaNodes();
   syncPreviewToggles();
   collapseNotificationPanel();
+  if (els.embedModal && !els.embedModal.hidden) {
+    updateEmbedPanel();
+  }
   window.requestAnimationFrame(() => fitContentToView());
   setStatus(`Active: ${graph.name}`, 1400);
 });
@@ -2296,13 +2318,19 @@ function ensureNodeContextMenu() {
   copyBtn.dataset.action = 'copy';
   copyBtn.textContent = 'Copy';
 
+  const focusBtn = document.createElement('button');
+  focusBtn.type = 'button';
+  focusBtn.className = 'ew-node-context-menu__item';
+  focusBtn.dataset.action = 'focus';
+  focusBtn.textContent = 'Focus';
+
   const editBtn = document.createElement('button');
   editBtn.type = 'button';
   editBtn.className = 'ew-node-context-menu__item';
   editBtn.dataset.action = 'edit';
   editBtn.textContent = 'Edit';
 
-  menu.append(copyBtn, editBtn);
+  menu.append(copyBtn, focusBtn, editBtn);
   menu.addEventListener('contextmenu', (event) => {
     event.preventDefault();
   });
@@ -2317,6 +2345,10 @@ function ensureNodeContextMenu() {
     const action = target.dataset.action;
     if (action === 'copy') {
       copyNodeContextTarget();
+      return;
+    }
+    if (action === 'focus') {
+      focusNodeContextTarget();
       return;
     }
     if (action === 'edit') {
@@ -2344,7 +2376,7 @@ function openNodeContextMenu(options = {}) {
   menu.style.top = '0px';
 
   const width = menu.offsetWidth || 140;
-  const height = menu.offsetHeight || 80;
+  const height = menu.offsetHeight || 116;
   const x = Math.min(
     window.innerWidth - width - margin,
     Math.max(margin, Math.round(options.clientX || 0))
@@ -2356,6 +2388,10 @@ function openNodeContextMenu(options = {}) {
   menu.style.left = `${x}px`;
   menu.style.top = `${y}px`;
 }
+
+window.elenweaveOpenNodeContextMenu = (options = {}) => {
+  openNodeContextMenu(options);
+};
 
 function closeNodeContextMenu() {
   if (!nodeContextMenu.el) return;
@@ -2495,6 +2531,45 @@ async function copyNodeContextTarget() {
     return;
   }
   setStatus('Copy failed.', 1600);
+}
+
+function focusNodeContextTarget() {
+  const nodeId = nodeContextMenu.nodeId;
+  closeNodeContextMenu();
+  if (!nodeId || !view?.graph) return;
+  const node = view.graph.getNode(nodeId);
+  if (!node) {
+    setStatus('Node not found.', 1400);
+    return;
+  }
+  if (typeof view.selectNode === 'function') {
+    view.selectNode(nodeId);
+  }
+  if (view.canvas && view.camera) {
+    const minZoom = view.minZoom || 0.3;
+    const maxZoom = view.maxZoom || 2.5;
+    const padding = 72;
+    const width = Math.max(1, node.w || 1);
+    const height = Math.max(1, node.h || 1);
+    const availableW = Math.max(1, view.canvas.clientWidth - padding * 2);
+    const availableH = Math.max(1, view.canvas.clientHeight - padding * 2);
+    const scale = Math.min(availableW / width, availableH / height);
+    view.camera.s = Math.min(maxZoom, Math.max(minZoom, scale));
+    view.camera.x = -(node.x + node.w / 2) * view.camera.s + view.canvas.clientWidth / 2;
+    view.camera.y = -(node.y + node.h / 2) * view.camera.s + view.canvas.clientHeight / 2;
+    if (typeof view._invalidate === 'function') view._invalidate();
+    setStatus('Focused on node.', 1200);
+    return;
+  }
+  if (typeof view.moveTo === 'function') {
+    view.moveTo(nodeId);
+    setStatus('Focused on node.', 1200);
+    return;
+  }
+  if (typeof view.focusNode === 'function') {
+    view.focusNode(nodeId);
+    setStatus('Focused on node.', 1200);
+  }
 }
 
 function findLinkedCodeSnippet(previewNodeId) {
@@ -3040,7 +3115,7 @@ async function activateLocalForkMode(options = {}) {
   }
 
   if (!nextActiveBoardId) {
-    const created = await createLocalBoard('Board 01', {
+    const created = await createLocalBoard('', {
       activate: false,
       queueEdit: false
     });
@@ -3076,6 +3151,28 @@ function createEmptyGraphPayload(id, name) {
   };
 }
 
+function formatBoardTimestamp(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return [
+    date.getFullYear(),
+    '-',
+    pad(date.getMonth() + 1),
+    '-',
+    pad(date.getDate()),
+    ' ',
+    pad(date.getHours()),
+    ':',
+    pad(date.getMinutes()),
+    ':',
+    pad(date.getSeconds())
+  ].join('');
+}
+
+function resolveBoardName(name) {
+  const trimmed = String(name || '').trim();
+  return trimmed || formatBoardTimestamp();
+}
+
 async function saveActiveGraph() {
   if (!view?.graph) return;
   const payload = view.exportGraph();
@@ -3105,12 +3202,13 @@ async function saveActiveGraph() {
 
 async function createLocalBoard(name, options = {}) {
   const projectId = activeProjectId || 'local-default';
+  const resolvedName = resolveBoardName(name);
   ensureProjectIndexEntry(projectId, projectId === 'local-default' ? 'Local Project' : undefined);
   const id = generateBoardId();
   const entry = {
     id,
     projectId,
-    name: name || 'Untitled',
+    name: resolvedName,
     updatedAt: Date.now()
   };
   boardIndex.push(entry);
@@ -3347,9 +3445,10 @@ async function activateProject(projectId, options = {}) {
       }
 
       if (!nextBoardId && options.createBoardIfEmpty === true) {
+        const fallbackName = resolveBoardName('');
         const created = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/boards`, {
           method: 'POST',
-          body: { name: 'Board 01' }
+          body: { name: fallbackName }
         });
         if (switchSeq !== projectSwitchSeq) return;
         const board = created?.board;
@@ -3357,7 +3456,7 @@ async function activateProject(projectId, options = {}) {
           upsertBoardIndexEntry({
             id: board.id,
             projectId,
-            name: board.name || 'Board 01',
+            name: board.name || fallbackName,
             updatedAt: board.updatedAt || Date.now()
           });
           nextBoardId = board.id;
@@ -3387,7 +3486,7 @@ async function activateProject(projectId, options = {}) {
       nextBoardId = boards[0]?.id || null;
     }
     if (!nextBoardId && options.createBoardIfEmpty === true) {
-      const created = await createLocalBoard('Board 01', {
+      const created = await createLocalBoard('', {
         activate: false,
         queueEdit: false
       });
@@ -3420,10 +3519,10 @@ async function activateBoard(boardId, options = {}) {
   if (activeBoardId === boardId && view?.graph && activeProjectId === projectId) return;
   isBoardSwitching = true;
   try {
-    activeProjectId = projectId;
     if (!options.skipSave) {
       await saveActiveGraph();
     }
+    activeProjectId = projectId;
     const scopedEntry = getBoardIndexEntry(boardId, projectId);
     if (!scopedEntry) {
       const conflicts = getBoardIndexEntriesById(boardId).filter((entry) => (entry.projectId || null) !== (projectId || null));
@@ -3451,6 +3550,7 @@ async function activateBoard(boardId, options = {}) {
 }
 
 async function createBoard(name) {
+  const resolvedName = resolveBoardName(name);
   if (await ensureServerMode()) {
     try {
       if (!activeProjectId) {
@@ -3459,14 +3559,14 @@ async function createBoard(name) {
       }
       const response = await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards`, {
         method: 'POST',
-        body: { name: name || 'Untitled' }
+        body: { name: resolvedName }
       });
       const board = response?.board;
       if (!board?.id) throw new Error('Board create failed');
       const entry = {
         id: board.id,
         projectId: activeProjectId,
-        name: board.name || name || 'Untitled',
+        name: board.name || resolvedName,
         updatedAt: board.updatedAt || Date.now()
       };
       boardIndex.push(entry);
@@ -3482,7 +3582,7 @@ async function createBoard(name) {
       }
     }
   }
-  await createLocalBoard(name || 'Untitled', {
+  await createLocalBoard(resolvedName, {
     activate: true,
     queueEdit: true
   });
@@ -5570,9 +5670,12 @@ async function seedBoards() {
   activeProjectId = projectIndex[0].id;
   const firstId = generateBoardId();
   const secondId = generateBoardId();
+  const seedStamp = formatBoardTimestamp();
+  const firstSeedName = `${seedStamp} A`;
+  const secondSeedName = `${seedStamp} B`;
   const firstPayload = {
     id: firstId,
-    name: 'Board 01',
+    name: firstSeedName,
     meta: null,
     nodeOrder: [],
     nodes: [
@@ -5603,7 +5706,7 @@ async function seedBoards() {
   };
   const secondPayload = {
     id: secondId,
-    name: 'Board 02',
+    name: secondSeedName,
     meta: null,
     nodeOrder: [],
     nodes: [
@@ -5613,8 +5716,8 @@ async function seedBoards() {
     notifications: []
   };
   boardIndex = [
-    { id: firstId, projectId: activeProjectId, name: 'Board 01', updatedAt: Date.now() },
-    { id: secondId, projectId: activeProjectId, name: 'Board 02', updatedAt: Date.now() }
+    { id: firstId, projectId: activeProjectId, name: firstSeedName, updatedAt: Date.now() },
+    { id: secondId, projectId: activeProjectId, name: secondSeedName, updatedAt: Date.now() }
   ];
   activeBoardId = firstId;
   await saveGraphPayload(firstId, scrubExportPayload(firstPayload));
@@ -6560,6 +6663,67 @@ function setDownloadPanelOpen(open) {
     void loadPublicCatalog(true);
     renderDownloadPanel('');
   }
+}
+
+function buildEmbedBaseUrl() {
+  const origin = window.location.origin;
+  if (!SERVER_BASE) return origin;
+  if (SERVER_BASE.startsWith('http://') || SERVER_BASE.startsWith('https://')) {
+    return SERVER_BASE.replace(/\/+$/, '');
+  }
+  return `${origin}${SERVER_BASE}`.replace(/\/+$/, '');
+}
+
+function updateEmbedPanel() {
+  if (!els.embedLinkInput || !els.embedCopyBtn || !els.embedNote) return;
+  const serverEnabled = IS_SERVER_MODE && !forceClientMode;
+  if (!serverEnabled) {
+    els.embedLinkInput.value = '';
+    els.embedCopyBtn.disabled = true;
+    els.embedNote.textContent = 'Embeds require server runtime mode.';
+    return;
+  }
+  if (!activeProjectId || !activeBoardId) {
+    els.embedLinkInput.value = '';
+    els.embedCopyBtn.disabled = true;
+    els.embedNote.textContent = 'Select a board to generate a link.';
+    return;
+  }
+  const theme = String(els.embedThemeSelect?.value || '').trim();
+  const base = buildEmbedBaseUrl();
+  const url = new URL('/embed', base);
+  url.searchParams.set('projectId', activeProjectId);
+  url.searchParams.set('boardId', activeBoardId);
+  if (theme) {
+    url.searchParams.set('theme', theme);
+  }
+  els.embedLinkInput.value = url.toString();
+  els.embedCopyBtn.disabled = false;
+  els.embedNote.textContent = 'Anyone with the link can view.';
+}
+
+function setEmbedModalOpen(open) {
+  if (!els.embedModal) return;
+  const isOpen = Boolean(open);
+  els.embedModal.hidden = !isOpen;
+  if (isOpen) {
+    const currentTheme = document.documentElement.getAttribute('data-theme') || loadTheme();
+    if (els.embedThemeSelect && THEME_ORDER.includes(currentTheme)) {
+      els.embedThemeSelect.value = currentTheme;
+    }
+    updateEmbedPanel();
+    window.setTimeout(() => els.embedLinkInput?.focus(), 0);
+  }
+}
+
+async function copyEmbedLink() {
+  const link = String(els.embedLinkInput?.value || '').trim();
+  if (!link) {
+    setStatus('Embed link unavailable.', 1600);
+    return;
+  }
+  const ok = await writeClipboardText(link);
+  setStatus(ok ? 'Embed link copied.' : 'Copy failed.', 1400);
 }
 
 function isDesktopBridgeAvailable() {

@@ -62,6 +62,33 @@ This document summarizes the AI-specific features implemented in the app layer (
 - User and AI audio are saved back onto the canvas as `AudioPlayer` nodes.
 - Visual live indicator + speaking/listening states.
 
+## Codex SDK Integration Plan (Not Implemented)
+This is a **plan only**. No Codex SDK integration has been implemented yet.
+
+### Goals
+- Run the Codex SDK server-side (Node) and expose an API to the app.
+- Use the existing `ew-actions/v1` JSON plan contract to apply results to the canvas.
+- Store Codex thread IDs for continuity across turns.
+
+### Proposed Architecture
+- **Server module**: add `server/codex_client.js` (or `server/ai/codex.js`) to wrap `@openai/codex-sdk`.
+- **Thread storage**: persist `codexThreadId` in project or board metadata.
+- **API routes**:
+  - `POST /api/ai/codex/run` → runs a turn and returns `finalResponse`, `items`, and `threadId`.
+  - Optional `POST /api/ai/codex/stream` → streams events (NDJSON/SSE) for progress UI.
+- **Client flow**:
+  - Add provider option `codex`.
+  - Reuse `buildAiPrompt()` and send as Codex input.
+  - Require Codex to return `ew-actions/v1` JSON; parse/apply via existing `applyAiPlan()`.
+
+### Output Schema
+- Enforce `{ version: "ew-actions/v1", nodes: [], edges: [] }` via Codex `outputSchema`.
+- Reject or surface errors when output does not conform.
+
+### Auth & Security
+- Codex CLI runs in the server environment; use server env keys only.
+- Limit filesystem scope and permissions where the server runs Codex.
+
 ## UI/UX Enhancements
 - Ctrl/Cmd + Enter sends AI input.
 - Send button pulses while AI request is in-flight.

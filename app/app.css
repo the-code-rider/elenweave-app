@@ -1153,6 +1153,21 @@ html[data-theme="light"] .modal-backdrop {
     font-size: 0.85rem;
 }
 
+.embed-link-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.embed-link-row input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.embed-link-row .btn {
+    white-space: nowrap;
+}
+
 .select-wrap {
     position: relative;
 }
@@ -2190,6 +2205,12 @@ html[data-theme="light"] .input-bar.is-ai-busy {
     height: 100%;
 }
 
+.ew-html-preview .ew-node-header {
+    position: relative;
+    z-index: 2;
+    pointer-events: auto;
+}
+
 .ew-html-preview-body {
     position: relative;
     display: flex;
@@ -2197,6 +2218,7 @@ html[data-theme="light"] .input-bar.is-ai-busy {
     min-height: 0;
     overflow: hidden;
     padding: 10px;
+    z-index: 1;
 }
 
 .ew-html-preview-frame {

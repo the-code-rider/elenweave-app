@@ -1,0 +1,134 @@
+html,
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+}
+
+body.embed-mode {
+    background: var(--app-bg);
+    color: var(--app-text);
+    overflow: hidden;
+}
+
+body.embed-transparent {
+    background: transparent;
+}
+
+.embed-shell {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+#ew-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.embed-status {
+    position: absolute;
+    left: 16px;
+    top: 16px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: color-mix(in oklab, var(--app-panel) 86%, transparent);
+    color: var(--app-text);
+    border: 1px solid color-mix(in oklab, var(--app-border) 70%, transparent);
+    font-size: 0.78rem;
+    letter-spacing: 0.03em;
+}
+
+.embed-status.is-hidden {
+    display: none;
+}
+
+.embed-status.is-error {
+    color: var(--app-warning);
+    border-color: color-mix(in oklab, var(--app-warning) 55%, var(--app-border));
+}
+
+body.embed-mode .embed-controls {
+    position: absolute;
+    display: grid;
+    gap: 10px;
+    z-index: 2;
+}
+
+.embed-controls--right {
+    right: 16px;
+    bottom: 16px;
+}
+
+.embed-controls--left {
+    left: 16px;
+    bottom: 16px;
+}
+
+body.embed-mode .nav-cluster-pad,
+body.embed-mode .nav-pad {
+    display: grid;
+    gap: 10px;
+    padding: 0;
+    border-radius: 0;
+    background: none;
+    border: none;
+    box-shadow: none;
+}
+
+body.embed-mode .nav-pad-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+body.embed-mode .nav-btn {
+    min-width: 36px;
+    height: 36px;
+    border-radius: 12px;
+    border: 1px solid color-mix(in oklab, var(--app-accent) 22%, var(--app-border));
+    background:
+        linear-gradient(180deg, rgba(22, 46, 64, 0.9), rgba(10, 22, 32, 0.95));
+    color: #e9fbff;
+    font-size: 0.9rem;
+    font-weight: 600;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        inset 0 -6px 12px rgba(0, 0, 0, 0.45),
+        0 10px 18px rgba(0, 0, 0, 0.3);
+    transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+body.embed-mode .nav-btn:hover {
+    border-color: color-mix(in oklab, var(--app-accent) 45%, var(--app-border));
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.2),
+        inset 0 -6px 12px rgba(0, 0, 0, 0.55),
+        0 12px 20px rgba(0, 0, 0, 0.35);
+    transform: translateY(-1px);
+}
+
+body.embed-mode .nav-btn:active {
+    transform: translateY(0);
+    box-shadow:
+        inset 0 2px 8px rgba(0, 0, 0, 0.55),
+        0 6px 12px rgba(0, 0, 0, 0.3);
+}
+
+body.embed-mode .nav-btn.nav-btn--text {
+    min-width: 54px;
+    padding: 0 8px;
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+body.embed-mode .ew-notif-cluster,
+body.embed-mode .ew-notif-icon {
+    display: none !important;
+}

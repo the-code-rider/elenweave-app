@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Elenweave - Embed</title>
+    <meta name="description" content="Embedded Elenweave board." />
+    <link rel="icon" href="/favicons/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicons/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicons/favicon-16x16.png" />
+
+    <script>
+      (function () {
+        try {
+          var params = new URLSearchParams(window.location.search);
+          var theme = params.get('theme');
+          var allowed = { light: true, dark: true, blueprint: true };
+          if (!allowed[theme]) {
+            theme = localStorage.getItem('elenweave_theme');
+          }
+          if (!allowed[theme]) {
+            theme = 'blueprint';
+          }
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch (err) {
+          document.documentElement.setAttribute('data-theme', 'blueprint');
+        }
+      })();
+    </script>
+    <script id="elenweave-runtime-config">
+      window.__ELENWEAVE_RUNTIME__ = {
+        storageMode: 'client',
+        publicProjectsCatalogUrl: ''
+      };
+    </script>
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/elenweave@0.1.1/dist/styles.css" />
+    <link rel="stylesheet" href="/app/app.css" />
+    <link rel="stylesheet" href="/app/embed.css" />
+  </head>
+  <body class="embed-mode">
+    <div class="embed-shell">
+      <canvas id="ew-canvas" aria-label="Elenweave board"></canvas>
+      
+      <div class="embed-status" id="embedStatus">Loading board...</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/elenweave@0.1.2/dist/elenweave.iife.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+    <script type="module" src="/app/embed.js"></script>
+  </body>
+</html>

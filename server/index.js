@@ -2182,6 +2182,19 @@ async function serveStatic(req, res, url) {
     res.end();
     return;
   }
+  if (url.pathname === '/embed') {
+    const embedPath = path.join(PAGES_DIR, 'app', 'embed.html');
+    const inServerMode = RUNTIME_STORAGE_MODE === 'server';
+    await sendIndexHtmlWithRuntimeConfig(res, embedPath, {
+      storageMode: RUNTIME_STORAGE_MODE,
+      serverBase: '',
+      seedReadOnlyMode: inServerMode ? READ_ONLY_CONFIG.mode : 'off',
+      seedReadOnlyProjectIds: inServerMode ? Array.from(READ_ONLY_CONFIG.projectIds) : [],
+      readOnlyFork: inServerMode ? READ_ONLY_CONFIG.fork : 'off',
+      publicProjectsCatalogUrl: PUBLIC_CATALOG_URL
+    });
+    return;
+  }
   const requestPath = url.pathname;
   const normalized = path.normalize(decodeURIComponent(requestPath));
   const filePath = path.resolve(PAGES_DIR, `.${normalized}`);

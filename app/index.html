@@ -88,6 +88,13 @@
               </svg>
               <span class="sr-only">Sort boards by time</span>
             </button>
+            <button class="btn ghost board-action-btn" id="btnShareBoard" type="button" aria-label="Share board" title="Share board">
+              <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7.5 12a2.5 2.5 0 1 0 2.45 3H14a2 2 0 1 1 0 4H6a4 4 0 1 1 1.7-7.62" fill="currentColor"></path>
+                <path d="M16.5 12a2.5 2.5 0 1 0-2.45-3H10a2 2 0 1 1 0-4h8a4 4 0 1 1-1.7 7.62" fill="currentColor"></path>
+              </svg>
+              <span class="sr-only">Share board</span>
+            </button>
             <button class="btn ghost board-action-btn board-action-btn--danger" id="btnDeleteBoard" type="button" aria-label="Delete active board" title="Delete active board">
               <svg class="btn-icon btn-icon-delete" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M7 4a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2h4a1 1 0 1 1 0 2h-1.069l-.867 12.142A2 2 0 0 1 17.069 22H6.93a2 2 0 0 1-1.995-1.858L4.07 8H3a1 1 0 0 1 0-2h4zm2 2h6V4H9zM6.074 8l.857 12H17.07l.857-12zM10 10a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0v-6a1 1 0 0 1 1-1m4 0a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0v-6a1 1 0 0 1 1-1" fill="currentColor"/>
@@ -262,6 +269,37 @@
     </div>
 
     <input type="file" id="importFile" accept="application/json" hidden />
+    <div class="modal-backdrop" id="embedModal" role="dialog" aria-modal="true" aria-label="Share board" hidden>
+        <div class="modal">
+            <div class="modal-header">
+                <div>
+                    <div class="modal-title">Share Board</div>
+                    <div class="modal-sub">Create a public embed link.</div>
+                </div>
+                <button class="btn ghost modal-close" id="embedClose" type="button">Close</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-field">
+                    <label for="embedThemeSelect">Theme</label>
+                    <div class="select-wrap">
+                        <select id="embedThemeSelect">
+                            <option value="blueprint">Blueprint</option>
+                            <option value="light">Light</option>
+                            <option value="dark">Dark</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-field">
+                    <label for="embedLinkInput">Embed Link</label>
+                    <div class="embed-link-row">
+                        <input id="embedLinkInput" type="text" readonly />
+                        <button class="btn" id="embedCopyBtn" type="button">Copy</button>
+                    </div>
+                    <div class="field-note" id="embedNote">Anyone with the link can view.</div>
+                </div>
+            </div>
+        </div>
+    </div>
     <div class="modal-backdrop" id="deleteBoardModal" role="dialog" aria-modal="true" aria-label="Delete board" hidden>
         <div class="modal delete-modal">
             <div class="modal-header">

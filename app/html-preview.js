@@ -72,6 +72,28 @@ export function render({ node }) {
   frame.setAttribute('referrerpolicy', 'no-referrer');
 
   body.append(placeholder, frame);
+  let frameContextMenuHandler = null;
+
+  const bindFrameContextMenu = (nodeId) => {
+    const doc = frame.contentDocument;
+    if (!doc) return;
+    if (frameContextMenuHandler) {
+      doc.removeEventListener('contextmenu', frameContextMenuHandler, true);
+    }
+    frameContextMenuHandler = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = frame.getBoundingClientRect();
+      const clientX = rect.left + event.clientX;
+      const clientY = rect.top + event.clientY;
+      if (typeof window.elenweaveOpenNodeContextMenu === 'function') {
+        window.elenweaveOpenNodeContextMenu({ nodeId, clientX, clientY });
+      }
+    };
+    doc.addEventListener('contextmenu', frameContextMenuHandler, true);
+  };
+
+  frame.addEventListener('load', () => bindFrameContextMenu(node?.id || ''));
 
   syncBtn.addEventListener('click', (event) => {
     event.preventDefault();
@@ -88,6 +110,9 @@ export function render({ node }) {
     placeholder.hidden = hasHtml;
     frame.hidden = !hasHtml;
     frame.srcdoc = hasHtml ? buildPreviewDocument(html) : '';
+    if (hasHtml) {
+      bindFrameContextMenu(next?.id || node?.id || '');
+    }
   };
 
   update(node);
