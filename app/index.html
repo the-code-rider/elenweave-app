@@ -30,7 +30,7 @@
     </script>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/elenweave@0.1.1/dist/styles.css" />
-    <link rel="stylesheet" href="./app.css" />
+    <link rel="stylesheet" href="/app/app.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -94,6 +94,13 @@
                 <path d="M16.5 12a2.5 2.5 0 1 0-2.45-3H10a2 2 0 1 1 0-4h8a4 4 0 1 1-1.7 7.62" fill="currentColor"></path>
               </svg>
               <span class="sr-only">Share board</span>
+            </button>
+            <button class="btn ghost board-action-btn" id="btnShareLink" type="button" aria-label="Copy app link" title="Copy app link">
+              <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M10.59 13.41a1 1 0 0 0 1.41 1.41l3.59-3.59a3 3 0 0 0-4.24-4.24L9 9.34a1 1 0 1 0 1.41 1.41l2.35-2.35a1 1 0 1 1 1.41 1.41l-3.58 3.6z" fill="currentColor"></path>
+                <path d="M13.41 10.59a1 1 0 0 0-1.41-1.41l-3.59 3.59a3 3 0 0 0 4.24 4.24L15 14.66a1 1 0 0 0-1.41-1.41l-2.35 2.35a1 1 0 1 1-1.41-1.41l3.58-3.6z" fill="currentColor"></path>
+              </svg>
+              <span class="sr-only">Copy app link</span>
             </button>
             <button class="btn ghost board-action-btn board-action-btn--danger" id="btnDeleteBoard" type="button" aria-label="Delete active board" title="Delete active board">
               <svg class="btn-icon btn-icon-delete" viewBox="0 0 24 24" aria-hidden="true">
@@ -356,6 +363,6 @@
     <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="/app/app.js"></script>
   </body>
 </html>

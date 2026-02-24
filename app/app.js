@@ -63,6 +63,7 @@ const els = {
   btnNew: document.getElementById('btnNew'),
   btnSortBoards: document.getElementById('btnSortBoards'),
   btnShareBoard: document.getElementById('btnShareBoard'),
+  btnShareLink: document.getElementById('btnShareLink'),
   btnDeleteBoard: document.getElementById('btnDeleteBoard'),
   componentPicker: document.getElementById('componentPicker'),
   inputBar: document.getElementById('inputBar'),
@@ -440,6 +441,8 @@ let nodeContextMenu = {
   nodeId: null,
   open: false
 };
+let projectPollTimer = null;
+const PROJECT_POLL_INTERVAL_MS = 10000;
 
 const AI_FOLLOW_UP_COMPONENTS = new Set(['TextInput', 'OptionPicker']);
 const NAV_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab']);
@@ -882,6 +885,9 @@ els.btnFooterDownload?.addEventListener('click', () => setDownloadPanelOpen(true
 els.btnImport.addEventListener('click', () => els.importFile.click());
 els.importFile.addEventListener('change', (e) => handleImportFile(e));
 els.btnShareBoard?.addEventListener('click', () => setEmbedModalOpen(true));
+els.btnShareLink?.addEventListener('click', () => {
+  void copyAppLink();
+});
 els.deleteBoardClose?.addEventListener('click', () => setDeleteBoardModalOpen(false));
 els.deleteBoardCancel?.addEventListener('click', () => setDeleteBoardModalOpen(false));
 els.deleteBoardConfirm?.addEventListener('click', () => {
@@ -3050,6 +3056,11 @@ async function fetchServerJson(path) {
 function setLocalForkMode(value) {
   forceClientMode = Boolean(value);
   saveLocalForkMode(forceClientMode);
+  if (forceClientMode) {
+    stopProjectPolling();
+  } else {
+    startProjectPolling();
+  }
 }
 
 async function activateLocalForkMode(options = {}) {
@@ -3410,6 +3421,7 @@ async function activateProject(projectId, options = {}) {
   if (!projectIndex.some((entry) => entry.id === projectId)) return;
   if (activeProjectId === projectId && !options.force) return;
   cancelProjectEdit({ force: true });
+  stopProjectPolling();
   const switchSeq = ++projectSwitchSeq;
   projectSwitchDepth += 1;
 
@@ -3510,6 +3522,7 @@ async function activateProject(projectId, options = {}) {
     setStatus('Project load failed.', 1800);
   } finally {
     projectSwitchDepth = Math.max(0, projectSwitchDepth - 1);
+    startProjectPolling();
   }
 }
 
@@ -3542,6 +3555,7 @@ async function activateBoard(boardId, options = {}) {
     activeBoardId = boardId;
     await saveWorkspaceIndex();
     validateBoardIndexInvariants();
+    syncAppUrl();
   } catch (err) {
     console.warn('Board activation failed', err);
   } finally {
@@ -3599,6 +3613,8 @@ function clearBoardViewForEmptyProject() {
   updateEdgeFields(null);
   workspace.clear();
   collapseNotificationPanel();
+  syncAppUrl();
+  updateShareLinkButton();
 }
 
 function setDeleteBoardModalOpen(open) {
@@ -6292,6 +6308,16 @@ function updateDeleteBoardButton() {
       : 'No active board to delete';
   els.btnDeleteBoard.setAttribute('title', title);
   els.btnDeleteBoard.setAttribute('aria-label', title);
+  updateShareLinkButton();
+}
+
+function updateShareLinkButton() {
+  if (!els.btnShareLink) return;
+  const hasActiveBoard = Boolean(activeBoardId && activeProjectId && getBoardIndexEntry(activeBoardId, activeProjectId || 'local-default'));
+  els.btnShareLink.disabled = !hasActiveBoard;
+  const title = hasActiveBoard ? 'Copy app link' : 'Select a board to copy a link';
+  els.btnShareLink.setAttribute('title', title);
+  els.btnShareLink.setAttribute('aria-label', title);
 }
 
 function formatShortDate(value) {
@@ -6665,6 +6691,97 @@ function setDownloadPanelOpen(open) {
   }
 }
 
+function shouldPollServerProjects() {
+  if (!IS_SERVER_MODE || forceClientMode) return false;
+  if (SEED_READ_ONLY_MODE !== 'off') return false;
+  if (READ_ONLY_FORK_MODE === 'local' && shouldForkLocally(activeProjectId)) return false;
+  return true;
+}
+
+function stopProjectPolling() {
+  if (projectPollTimer) {
+    window.clearInterval(projectPollTimer);
+    projectPollTimer = null;
+  }
+}
+
+function startProjectPolling() {
+  stopProjectPolling();
+  if (!shouldPollServerProjects()) return;
+  projectPollTimer = window.setInterval(() => {
+    void pollServerProjects();
+  }, PROJECT_POLL_INTERVAL_MS);
+}
+
+function areProjectListsEqual(next, prev) {
+  if (!Array.isArray(next) || !Array.isArray(prev)) return false;
+  if (next.length !== prev.length) return false;
+  for (let i = 0; i < next.length; i += 1) {
+    const a = next[i];
+    const b = prev[i];
+    if (!b) return false;
+    if (String(a.id || '') !== String(b.id || '')) return false;
+    if (Number(a.updatedAt || 0) !== Number(b.updatedAt || 0)) return false;
+  }
+  return true;
+}
+
+function areBoardListsEqual(next, prev) {
+  if (!Array.isArray(next) || !Array.isArray(prev)) return false;
+  if (next.length !== prev.length) return false;
+  for (let i = 0; i < next.length; i += 1) {
+    const a = next[i];
+    const b = prev[i];
+    if (!b) return false;
+    if (String(a.id || '') !== String(b.id || '')) return false;
+    if (Number(a.updatedAt || 0) !== Number(b.updatedAt || 0)) return false;
+  }
+  return true;
+}
+
+async function pollServerProjects() {
+  if (!shouldPollServerProjects()) {
+    stopProjectPolling();
+    return;
+  }
+  try {
+    const payload = await apiFetch('/api/projects');
+    const projects = Array.isArray(payload?.projects) ? payload.projects : [];
+    const nextProjects = projects.map((entry) => mapProjectEntry(entry)).filter((entry) => entry.id);
+    const sortedNext = [...nextProjects].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const sortedPrev = [...projectIndex].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const projectsChanged = !areProjectListsEqual(sortedNext, sortedPrev);
+    if (projectsChanged) {
+      projectIndex = nextProjects;
+      refreshProjectList();
+      if (activeProjectId && !projectIndex.some((entry) => entry.id === activeProjectId)) {
+        activeProjectId = projectIndex[0]?.id || null;
+      }
+    }
+    if (activeProjectId) {
+      const boardsPayload = await apiFetch(`/api/projects/${encodeURIComponent(activeProjectId)}/boards`);
+      const boards = Array.isArray(boardsPayload?.boards) ? boardsPayload.boards : [];
+      const nextBoards = boards.map((entry) => ({
+        id: entry.id,
+        projectId: activeProjectId,
+        name: entry.name || 'Untitled',
+        updatedAt: entry.updatedAt || Date.now()
+      }));
+      const prevBoards = getBoardsForProject(activeProjectId);
+      const sortedNextBoards = [...nextBoards].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      const sortedPrevBoards = [...prevBoards].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      const boardsChanged = !areBoardListsEqual(sortedNextBoards, sortedPrevBoards);
+      if (boardsChanged) {
+        removeBoardsForProject(activeProjectId);
+        boardIndex.push(...nextBoards);
+        refreshBoardList();
+      }
+    }
+  } catch (err) {
+    // Silent retry on next tick.
+  }
+}
+
 function buildEmbedBaseUrl() {
   const origin = window.location.origin;
   if (!SERVER_BASE) return origin;
@@ -6672,6 +6789,88 @@ function buildEmbedBaseUrl() {
     return SERVER_BASE.replace(/\/+$/, '');
   }
   return `${origin}${SERVER_BASE}`.replace(/\/+$/, '');
+}
+
+function buildAppBaseUrl() {
+  const origin = window.location.origin;
+  if (!SERVER_BASE) return origin;
+  if (SERVER_BASE.startsWith('http://') || SERVER_BASE.startsWith('https://')) {
+    return SERVER_BASE.replace(/\/+$/, '');
+  }
+  return `${origin}${SERVER_BASE}`.replace(/\/+$/, '');
+}
+
+function buildAppLink(projectId, boardId) {
+  const base = buildAppBaseUrl();
+  const url = new URL('/', base);
+  const resolvedProjectId = String(projectId || '').trim();
+  const resolvedBoardId = String(boardId || '').trim();
+  if (resolvedProjectId) {
+    url.searchParams.set('projectId', resolvedProjectId);
+  }
+  if (resolvedBoardId) {
+    url.searchParams.set('boardId', resolvedBoardId);
+  }
+  return url.toString();
+}
+
+function syncAppUrl() {
+  if (!window.history || typeof window.history.replaceState !== 'function') return;
+  const next = buildAppLink(activeProjectId, activeBoardId);
+  window.history.replaceState(
+    { projectId: activeProjectId || null, boardId: activeBoardId || null },
+    '',
+    next
+  );
+}
+
+function parseAppLinkParams() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    projectId: String(params.get('projectId') || '').trim(),
+    boardId: String(params.get('boardId') || '').trim()
+  };
+}
+
+async function applyAppLinkSelection() {
+  const { projectId, boardId } = parseAppLinkParams();
+  if (!projectId && !boardId) return false;
+  let resolvedProjectId = projectId;
+  const resolvedBoardId = boardId;
+
+  if (!resolvedProjectId && resolvedBoardId) {
+    const matches = getBoardIndexEntriesById(resolvedBoardId);
+    if (matches.length === 1) {
+      resolvedProjectId = matches[0].projectId;
+    } else if (matches.length > 1) {
+      setStatus('Board link matches multiple projects.', 2200);
+      return false;
+    }
+  }
+
+  if (resolvedProjectId && !projectIndex.some((entry) => entry.id === resolvedProjectId)) {
+    setStatus('Project link not found in this workspace.', 2200);
+    return false;
+  }
+
+  if (resolvedProjectId && (resolvedProjectId !== activeProjectId || !activeProjectId)) {
+    await activateProject(resolvedProjectId, { skipSave: true, force: true, createBoardIfEmpty: false });
+  }
+
+  if (resolvedBoardId) {
+    const scopedProjectId = resolvedProjectId || activeProjectId || 'local-default';
+    const boardEntry = getBoardIndexEntry(resolvedBoardId, scopedProjectId)
+      || getBoardIndexEntriesById(resolvedBoardId)[0];
+    if (!boardEntry) {
+      setStatus('Board link not found in this workspace.', 2200);
+      syncAppUrl();
+      return false;
+    }
+    await activateBoard(boardEntry.id, { skipSave: true, projectId: boardEntry.projectId || scopedProjectId });
+  }
+
+  syncAppUrl();
+  return true;
 }
 
 function updateEmbedPanel() {
@@ -6724,6 +6923,20 @@ async function copyEmbedLink() {
   }
   const ok = await writeClipboardText(link);
   setStatus(ok ? 'Embed link copied.' : 'Copy failed.', 1400);
+}
+
+async function copyAppLink() {
+  if (!activeProjectId || !activeBoardId) {
+    setStatus('Select a board to copy a link.', 1600);
+    return;
+  }
+  const link = buildAppLink(activeProjectId, activeBoardId);
+  if (!link) {
+    setStatus('Link unavailable.', 1600);
+    return;
+  }
+  const ok = await writeClipboardText(link);
+  setStatus(ok ? 'Link copied.' : 'Copy failed.', 1400);
 }
 
 function isDesktopBridgeAvailable() {
@@ -6904,6 +7117,7 @@ async function initApp() {
   }
   refreshProjectList();
   refreshBoardList();
+  await applyAppLinkSelection();
   setTheme(loadTheme());
   setEdgeStyle(loadEdgeStyle());
   updateEdgeToggle();
@@ -6929,6 +7143,7 @@ async function initApp() {
     localForkNoticeShown = true;
     return;
   }
+  startProjectPolling();
   setStatus('Demo workspace ready.');
 }
 

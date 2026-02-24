@@ -2173,12 +2173,12 @@ async function handleApi(req, res, url) {
 
 async function serveStatic(req, res, url) {
   if (url.pathname === '/') {
-    res.writeHead(302, { Location: '/app/index.html' });
-    res.end();
+    const indexPath = path.join(PAGES_DIR, 'app', 'index.html');
+    await sendFile(res, indexPath);
     return;
   }
-  if (url.pathname === '/app') {
-    res.writeHead(302, { Location: '/app/index.html' });
+  if (url.pathname === '/app' || url.pathname === '/app/' || url.pathname === '/app/index.html') {
+    res.writeHead(301, { Location: '/' });
     res.end();
     return;
   }
