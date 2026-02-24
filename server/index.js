@@ -261,9 +261,7 @@ async function resolveAiProviderKey(provider) {
     return firstNonEmptyString(
       process.env.ELENWEAVE_OPENAI_API_KEY,
       process.env.OPENAI_API_KEY,
-      config.openaiApiKey,
-      config.openai?.apiKey,
-      config.providers?.openai?.apiKey
+      config.openaiApiKey
     );
   }
   if (provider === 'gemini') {
@@ -271,10 +269,7 @@ async function resolveAiProviderKey(provider) {
       process.env.ELENWEAVE_GEMINI_API_KEY,
       process.env.GEMINI_API_KEY,
       process.env.GOOGLE_API_KEY,
-      config.geminiApiKey,
-      config.googleApiKey,
-      config.gemini?.apiKey,
-      config.providers?.gemini?.apiKey
+      config.geminiApiKey
     );
   }
   return '';
@@ -286,24 +281,14 @@ async function resolveAiProviderDefaultModel(provider) {
     return firstNonEmptyString(
       process.env.ELENWEAVE_OPENAI_MODEL,
       process.env.ELENWEAVE_OPENAI_DEFAULT_MODEL,
-      config.openaiModel,
-      config.openaiDefaultModel,
-      config.openai?.model,
-      config.openai?.defaultModel,
-      config.providers?.openai?.model,
-      config.providers?.openai?.defaultModel
+      config.openaiModel
     );
   }
   if (provider === 'gemini') {
     return firstNonEmptyString(
       process.env.ELENWEAVE_GEMINI_MODEL,
       process.env.ELENWEAVE_GEMINI_DEFAULT_MODEL,
-      config.geminiModel,
-      config.geminiDefaultModel,
-      config.gemini?.model,
-      config.gemini?.defaultModel,
-      config.providers?.gemini?.model,
-      config.providers?.gemini?.defaultModel
+      config.geminiModel
     );
   }
   return '';

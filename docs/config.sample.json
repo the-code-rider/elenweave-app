@@ -1,0 +1,7 @@
+{
+  "defaultProvider": "openai",
+  "openaiApiKey": "sk-REPLACE_ME",
+  "openaiModel": "gpt-5-mini",
+  "geminiApiKey": "REPLACE_ME",
+  "geminiModel": "gemini-3-flash-preview"
+}

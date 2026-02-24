@@ -57,16 +57,15 @@ AI key config file options:
 - `./config.json` (repo root, auto-detected)
 - `./server/config.json` (auto-detected)
 
-Supported `config.json` keys:
+Supported `config.json` keys (flat):
 
-- OpenAI key: `openaiApiKey` or `openai.apiKey` or `providers.openai.apiKey`
-- Gemini key: `geminiApiKey` / `googleApiKey` or `gemini.apiKey` or `providers.gemini.apiKey`
-- OpenAI default model: `openaiModel` or `openai.model` or `providers.openai.model`
-- Gemini default model: `geminiModel` or `gemini.model` or `providers.gemini.model`
-- OpenAI default-model aliases: `openaiDefaultModel`, `openai.defaultModel`, `providers.openai.defaultModel`
-- Gemini default-model aliases: `geminiDefaultModel`, `gemini.defaultModel`, `providers.gemini.defaultModel`
+- Default provider: `defaultProvider` (`openai` or `gemini`)
+- OpenAI key: `openaiApiKey`
+- Gemini key: `geminiApiKey`
+- OpenAI default model: `openaiModel`
+- Gemini default model: `geminiModel`
 
-Model env overrides:
+Model env overrides (still supported):
 
 - `ELENWEAVE_OPENAI_MODEL` (alias: `ELENWEAVE_OPENAI_DEFAULT_MODEL`)
 - `ELENWEAVE_GEMINI_MODEL` (alias: `ELENWEAVE_GEMINI_DEFAULT_MODEL`)
