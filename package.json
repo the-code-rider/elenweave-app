@@ -11,7 +11,11 @@
     "server:cli": "node server/cli.js",
     "start": "npm run server",
     "dev": "node --watch server/index.js",
-    "pack:check": "npm pack --dry-run"
+    "pack:check": "npm pack --dry-run",
+    "desktop:install": "npm --prefix desktop install",
+    "desktop:dev": "npm --prefix desktop run dev",
+    "desktop:pack": "npm --prefix desktop run pack",
+    "desktop:build:win": "npm --prefix desktop run build:win"
   },
   "files": [
     "app",
@@ -31,5 +35,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "electron": "^40.4.1"
   }
 }
