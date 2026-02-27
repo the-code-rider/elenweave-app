@@ -86,3 +86,14 @@ Key constant:
 - The prompt is built from board + history + context nodes + attachments.
 - The AI can ask for user input using inbuilt nodes.
 - The userâ€™s responses are captured from those nodes and appended to the next prompt.
+
+## Interactive apps and games
+
+When the user explicitly asks for an interactive app, game, or demo, the prompt
+steers the model to produce a runnable HTML+JS canvas experience. The response
+should include a `CodeSnippet` node (full HTML in `data.code`) and an
+`HtmlPreview` node (same HTML in `data.html`) linked by an edge. The HTML should
+use `<canvas>` with `requestAnimationFrame`, include basic input handling when
+relevant, avoid `eval` or infinite loops, and keep animation complexity bounded.
+External libraries via CDN are allowed only if they materially simplify the
+request.
