@@ -294,6 +294,25 @@ async function resolveAiProviderDefaultModel(provider) {
   return '';
 }
 
+async function resolveAiProviderTaskModels(provider) {
+  const config = await loadAiConfig();
+  let taskConfig = null;
+  if (provider === 'openai') {
+    taskConfig = config.openaiModels;
+  } else if (provider === 'gemini') {
+    taskConfig = config.geminiModels;
+  }
+  if (!taskConfig || typeof taskConfig !== 'object') return {};
+  const general = firstNonEmptyString(taskConfig.general);
+  const appGen = firstNonEmptyString(taskConfig.appGen);
+  const codeExplain = firstNonEmptyString(taskConfig.codeExplain);
+  const resolved = {};
+  if (general) resolved.general = general;
+  if (appGen) resolved.appGen = appGen;
+  if (codeExplain) resolved.codeExplain = codeExplain;
+  return resolved;
+}
+
 async function listAvailableAiProviders() {
   const providers = [];
   if (await resolveAiProviderKey('openai')) providers.push('openai');
@@ -1642,13 +1661,18 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/ai/providers') {
     const providers = await listAvailableAiProviders();
     const defaultModels = {};
+    const taskModels = {};
     for (const provider of providers) {
       const model = await resolveAiProviderDefaultModel(provider);
       if (model) {
         defaultModels[provider] = model;
       }
+      const tasks = await resolveAiProviderTaskModels(provider);
+      if (tasks && Object.keys(tasks).length) {
+        taskModels[provider] = tasks;
+      }
     }
-    sendJson(res, 200, { providers, defaultModels });
+    sendJson(res, 200, { providers, defaultModels, taskModels });
     return;
   }
 

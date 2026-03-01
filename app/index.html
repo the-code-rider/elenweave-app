@@ -349,6 +349,21 @@
                     <input id="modelInput" type="text" placeholder="Model name" autocomplete="off" />
                     <div class="field-note" id="modelNote">Defaults: gpt-5-mini (OpenAI), gemini-3-flash-preview (Gemini).</div>
                 </div>
+                <div class="modal-field">
+                    <label for="modelInputGeneral">General Model</label>
+                    <input id="modelInputGeneral" type="text" placeholder="Optional task model" autocomplete="off" />
+                    <div class="field-note" id="modelNoteGeneral">Fallback model for non-specialized requests.</div>
+                </div>
+                <div class="modal-field">
+                    <label for="modelInputAppGen">App/Canvas Model</label>
+                    <input id="modelInputAppGen" type="text" placeholder="Optional task model" autocomplete="off" />
+                    <div class="field-note" id="modelNoteAppGen">Used for app/game/canvas generation requests.</div>
+                </div>
+                <div class="modal-field">
+                    <label for="modelInputCodeExplain">Code Explain Model</label>
+                    <input id="modelInputCodeExplain" type="text" placeholder="Optional task model" autocomplete="off" />
+                    <div class="field-note" id="modelNoteCodeExplain">Used for code/file explanation requests.</div>
+                </div>
                 <div class="modal-actions">
                     <button class="btn ghost" id="apiKeyClear" type="button">Clear Key</button>
                     <button class="btn accent" id="apiKeySave" type="button">Save</button>

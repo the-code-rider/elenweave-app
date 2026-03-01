@@ -64,6 +64,8 @@ Supported `config.json` keys (flat):
 - Gemini key: `geminiApiKey`
 - OpenAI default model: `openaiModel`
 - Gemini default model: `geminiModel`
+- OpenAI task models: `openaiModels` (object with `general`, `appGen`, `codeExplain`)
+- Gemini task models: `geminiModels` (object with `general`, `appGen`, `codeExplain`)
 
 Model env overrides (still supported):
 

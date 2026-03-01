@@ -8,6 +8,10 @@ This document summarizes the AI-specific features implemented in the app layer (
   - Gemini: `gemini-3-flash-preview`
 - In local server mode, `config.json` can provide provider-specific defaults (`openaiModel`, `geminiModel`) and keys (`openaiApiKey`, `geminiApiKey`) used automatically for AI requests unless the browser has a local override.
 - Model Config panel supports per-provider API keys + model overrides stored locally in the browser.
+- Task model overrides (optional):
+  - Config keys: `openaiModels` / `geminiModels` with `general`, `appGen`, `codeExplain`.
+  - UI overrides stored locally (per provider).
+  - Resolution order: config task model → UI task model → config provider default → UI provider default → built-in default.
 - In local server mode, AI calls can use server-side keys from env/config via `/api/ai/*` proxy routes.
 
 ## Prompt & Output Contract

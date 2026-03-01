@@ -97,3 +97,6 @@ use `<canvas>` with `requestAnimationFrame`, include basic input handling when
 relevant, avoid `eval` or infinite loops, and keep animation complexity bounded.
 External libraries via CDN are allowed only if they materially simplify the
 request.
+
+If a task-specific AppGen model is configured, app/game/canvas prompts will use
+that model instead of the provider default.

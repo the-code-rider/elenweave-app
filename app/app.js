@@ -95,6 +95,12 @@ const els = {
   apiKeyNote: document.getElementById('apiKeyNote'),
   modelInput: document.getElementById('modelInput'),
   modelNote: document.getElementById('modelNote'),
+  modelInputGeneral: document.getElementById('modelInputGeneral'),
+  modelNoteGeneral: document.getElementById('modelNoteGeneral'),
+  modelInputAppGen: document.getElementById('modelInputAppGen'),
+  modelNoteAppGen: document.getElementById('modelNoteAppGen'),
+  modelInputCodeExplain: document.getElementById('modelInputCodeExplain'),
+  modelNoteCodeExplain: document.getElementById('modelNoteCodeExplain'),
   btnRealtime: document.getElementById('btnRealtime'),
   desktopSettingsGroup: document.getElementById('desktopSettingsGroup'),
   desktopRuntimeInfo: document.getElementById('desktopRuntimeInfo'),
@@ -128,6 +134,8 @@ const BOARD_SORT_KEY = 'elenweave_board_sort_order';
 const AI_PROVIDER_KEY = 'elenweave_ai_provider';
 const AI_KEY_PREFIX = 'elenweave_ai_key_';
 const AI_MODEL_PREFIX = 'elenweave_ai_model_';
+const AI_TASK_MODEL_PREFIX = 'elenweave_ai_model_';
+const AI_TASK_KEYS = ['general', 'appGen', 'codeExplain'];
 const AI_DEFAULT_MODELS = {
   openai: 'gpt-5-mini',
   gemini: 'gemini-3-flash-preview'
@@ -387,6 +395,7 @@ function resolveAiProxyBaseUrl(provider) {
 async function refreshServerAiProviders() {
   serverAiProviders = new Set();
   serverAiDefaultModels = new Map();
+  serverAiTaskModels = new Map();
   if (!IS_SERVER_MODE) return;
   try {
     const payload = await apiFetch('/api/ai/providers');
@@ -406,9 +415,27 @@ async function refreshServerAiProviders() {
         serverAiDefaultModels.set(provider, model);
       }
     });
+    const taskModels = payload?.taskModels && typeof payload.taskModels === 'object'
+      ? payload.taskModels
+      : {};
+    Object.entries(taskModels).forEach(([provider, value]) => {
+      if (provider !== 'openai' && provider !== 'gemini') return;
+      if (!value || typeof value !== 'object') return;
+      const general = String(value.general || '').trim();
+      const appGen = String(value.appGen || '').trim();
+      const codeExplain = String(value.codeExplain || '').trim();
+      const entry = {};
+      if (general) entry.general = general;
+      if (appGen) entry.appGen = appGen;
+      if (codeExplain) entry.codeExplain = codeExplain;
+      if (Object.keys(entry).length) {
+        serverAiTaskModels.set(provider, entry);
+      }
+    });
   } catch (err) {
     serverAiProviders = new Set();
     serverAiDefaultModels = new Map();
+    serverAiTaskModels = new Map();
   }
 }
 
@@ -432,6 +459,7 @@ let navFocusArmed = false;
 let navFocusTimer = null;
 let serverAiProviders = new Set();
 let serverAiDefaultModels = new Map();
+let serverAiTaskModels = new Map();
 let lastSelectedNodeEl = null;
 let desktopRuntimeInfo = null;
 let desktopSettingsBusy = false;
@@ -1227,7 +1255,6 @@ async function handleSend() {
     }
     let didSetPending = false;
     try {
-      const model = resolveAiModel(provider);
       const attachments = collectAiAttachments(values);
       if (attachments.file && !attachments.kind) {
         setStatus('Upload an image, audio, or text/code file.', 1800);
@@ -1238,6 +1265,8 @@ async function handleSend() {
         setStatus('Enter a message or attach media.', 1600);
         return;
       }
+      const task = resolveAiTask(message, attachments);
+      const model = resolveAiModelForTask(provider, task);
       setAiRequestState(true);
       didSetPending = true;
       setStatus('Sending to AI...', 0);
@@ -2669,6 +2698,52 @@ function getSelectedProvider() {
   return provider === 'gemini' ? 'gemini' : 'openai';
 }
 
+function formatProviderLabel(provider) {
+  return provider === 'gemini' ? 'Gemini' : 'OpenAI';
+}
+
+function buildDefaultModelNote(provider) {
+  const providerLabel = formatProviderLabel(provider);
+  const localDefault = readModel(provider);
+  const serverDefault = serverAiDefaultModels.get(provider);
+  const fallback = AI_DEFAULT_MODELS[provider] || AI_DEFAULT_MODELS.openai;
+  if (serverDefault) {
+    return localDefault && localDefault !== serverDefault
+      ? `Using server default: ${serverDefault}. Local override ignored.`
+      : `Using server default: ${serverDefault}.`;
+  }
+  if (localDefault) {
+    return `Saved locally for ${providerLabel}.`;
+  }
+  return `Using default: ${fallback}.`;
+}
+
+function buildTaskModelNote(provider, taskKey) {
+  const providerLabel = formatProviderLabel(provider);
+  const serverTask = serverAiTaskModels.get(provider)?.[taskKey];
+  const localTask = readTaskModel(provider, taskKey);
+  const serverDefault = serverAiDefaultModels.get(provider);
+  const localDefault = readModel(provider);
+  const fallback = AI_DEFAULT_MODELS[provider] || AI_DEFAULT_MODELS.openai;
+  if (serverTask) {
+    return localTask && localTask !== serverTask
+      ? `Using server config: ${serverTask}. Local override ignored.`
+      : `Using server config: ${serverTask}.`;
+  }
+  if (localTask) {
+    return `Saved locally for ${providerLabel}.`;
+  }
+  if (serverDefault) {
+    return localDefault && localDefault !== serverDefault
+      ? `Using server default: ${serverDefault}. Local default ignored.`
+      : `Using server default: ${serverDefault}.`;
+  }
+  if (localDefault) {
+    return `Using local default: ${localDefault}.`;
+  }
+  return `Using default: ${fallback}.`;
+}
+
 function syncApiKeyInput() {
   if (!els.apiKeyInput || !els.providerSelect) return;
   const provider = getSelectedProvider();
@@ -2678,6 +2753,15 @@ function syncApiKeyInput() {
   els.apiKeyInput.value = key || '';
   if (els.modelInput) {
     els.modelInput.value = model || '';
+  }
+  if (els.modelInputGeneral) {
+    els.modelInputGeneral.value = readTaskModel(provider, 'general');
+  }
+  if (els.modelInputAppGen) {
+    els.modelInputAppGen.value = readTaskModel(provider, 'appGen');
+  }
+  if (els.modelInputCodeExplain) {
+    els.modelInputCodeExplain.value = readTaskModel(provider, 'codeExplain');
   }
   if (els.apiKeyNote) {
     if (serverProviderEnabled) {
@@ -2689,12 +2773,16 @@ function syncApiKeyInput() {
     }
   }
   if (els.modelNote) {
-    const fallback = resolveAiModel(provider);
-    els.modelNote.textContent = model
-      ? `Saved locally for ${provider === 'openai' ? 'OpenAI' : 'Gemini'}.`
-      : serverAiDefaultModels.has(provider)
-        ? `Using server default: ${fallback}.`
-        : `Using default: ${fallback}.`;
+    els.modelNote.textContent = buildDefaultModelNote(provider);
+  }
+  if (els.modelNoteGeneral) {
+    els.modelNoteGeneral.textContent = buildTaskModelNote(provider, 'general');
+  }
+  if (els.modelNoteAppGen) {
+    els.modelNoteAppGen.textContent = buildTaskModelNote(provider, 'appGen');
+  }
+  if (els.modelNoteCodeExplain) {
+    els.modelNoteCodeExplain.textContent = buildTaskModelNote(provider, 'codeExplain');
   }
   saveProvider(provider);
 }
@@ -2704,6 +2792,9 @@ function saveApiKey() {
   const provider = getSelectedProvider();
   const key = String(els.apiKeyInput.value || '').trim();
   const model = String(els.modelInput?.value || '').trim();
+  const generalModel = String(els.modelInputGeneral?.value || '').trim();
+  const appGenModel = String(els.modelInputAppGen?.value || '').trim();
+  const codeExplainModel = String(els.modelInputCodeExplain?.value || '').trim();
   if (!key) {
     setStatus('API key is empty.', 1400);
     return;
@@ -2715,6 +2806,9 @@ function saveApiKey() {
     } else {
       localStorage.removeItem(`${AI_MODEL_PREFIX}${provider}`);
     }
+    writeTaskModel(provider, 'general', generalModel);
+    writeTaskModel(provider, 'appGen', appGenModel);
+    writeTaskModel(provider, 'codeExplain', codeExplainModel);
   } catch (err) {
     setStatus('Unable to save API key.', 1600);
     return;
@@ -2728,6 +2822,9 @@ function clearApiKey() {
   try {
     localStorage.removeItem(`${AI_KEY_PREFIX}${provider}`);
     localStorage.removeItem(`${AI_MODEL_PREFIX}${provider}`);
+    localStorage.removeItem(taskModelStorageKey(provider, 'general'));
+    localStorage.removeItem(taskModelStorageKey(provider, 'appGen'));
+    localStorage.removeItem(taskModelStorageKey(provider, 'codeExplain'));
   } catch (err) {
     setStatus('Unable to clear API key.', 1600);
     return;
@@ -2752,12 +2849,69 @@ function readModel(provider) {
   }
 }
 
-function resolveAiModel(provider) {
-  const localModel = readModel(provider);
-  if (localModel) return localModel;
-  const serverModel = serverAiDefaultModels.get(provider);
-  if (serverModel) return serverModel;
+function taskModelStorageKey(provider, taskKey) {
+  return `${AI_TASK_MODEL_PREFIX}${taskKey}_${provider}`;
+}
+
+function readTaskModel(provider, taskKey) {
+  try {
+    return localStorage.getItem(taskModelStorageKey(provider, taskKey)) || '';
+  } catch (err) {
+    return '';
+  }
+}
+
+function writeTaskModel(provider, taskKey, value) {
+  try {
+    const key = taskModelStorageKey(provider, taskKey);
+    if (value) {
+      localStorage.setItem(key, value);
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch (err) {
+    return;
+  }
+}
+
+function resolveAiTask(message, attachments) {
+  const text = String(message || '').toLowerCase();
+  const hasTextAttachment = Boolean(attachments?.file && attachments?.kind === 'text');
+  const appKeywords = [
+    /\bapps?\b/,
+    /\bgames?\b/,
+    /\bcanvas\b/,
+    /\binteractive\b/,
+    /\bdemos?\b/,
+    /\bprototypes?\b/
+  ];
+  const appVerbs = ['build', 'create', 'make', 'generate', 'design', 'produce'];
+  const hasAppKeyword = appKeywords.some((pattern) => pattern.test(text));
+  const hasHtmlGen = text.includes('html')
+    && appVerbs.some((verb) => text.includes(verb));
+  if (hasAppKeyword || hasHtmlGen) return 'appGen';
+  if (hasTextAttachment) return 'codeExplain';
+  if (text.includes('explain') && (text.includes('code') || text.includes('file') || text.includes('snippet'))) {
+    return 'codeExplain';
+  }
+  return 'general';
+}
+
+function resolveAiModelForTask(provider, taskKey) {
+  const normalizedTask = AI_TASK_KEYS.includes(taskKey) ? taskKey : 'general';
+  const serverTask = serverAiTaskModels.get(provider)?.[normalizedTask];
+  if (serverTask) return serverTask;
+  const localTask = readTaskModel(provider, normalizedTask);
+  if (localTask) return localTask;
+  const serverDefault = serverAiDefaultModels.get(provider);
+  if (serverDefault) return serverDefault;
+  const localDefault = readModel(provider);
+  if (localDefault) return localDefault;
   return AI_DEFAULT_MODELS[provider] || AI_DEFAULT_MODELS.openai;
+}
+
+function resolveAiModel(provider) {
+  return resolveAiModelForTask(provider, 'general');
 }
 
 function loadProvider() {
@@ -4239,9 +4393,10 @@ async function handleAiFollowUp(node) {
   }
   let didSetPending = false;
   try {
-    const model = resolveAiModel(provider);
     const message = resolveAiFollowUpMessage(node);
     const attachments = { file: null, kind: null };
+    const task = resolveAiTask(message, attachments);
+    const model = resolveAiModelForTask(provider, task);
     setAiRequestState(true);
     didSetPending = true;
     setStatus('Sending follow-up to AI...', 0);
@@ -4299,8 +4454,9 @@ async function handleRealtimeIntent(intent) {
   const apiKey = readApiKey(provider);
   const proxyBaseUrl = resolveAiProxyBaseUrl(provider);
   if (!apiKey && proxyBaseUrl == null) return { result: 'missing_api_key' };
-  const model = resolveAiModel(provider);
   const attachments = { file: null, kind: null };
+  const task = resolveAiTask(trimmed, attachments);
+  const model = resolveAiModelForTask(provider, task);
   const result = await requestAiPlan({
     provider,
     apiKey,
