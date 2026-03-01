@@ -71,7 +71,24 @@ export function render({ node }) {
   frame.setAttribute('sandbox', 'allow-scripts');
   frame.setAttribute('referrerpolicy', 'no-referrer');
 
-  body.append(placeholder, frame);
+  const edgeTop = document.createElement('div');
+  edgeTop.className = 'ew-html-preview-edge is-top';
+  const edgeRight = document.createElement('div');
+  edgeRight.className = 'ew-html-preview-edge is-right';
+  const edgeBottom = document.createElement('div');
+  edgeBottom.className = 'ew-html-preview-edge is-bottom';
+  const edgeLeft = document.createElement('div');
+  edgeLeft.className = 'ew-html-preview-edge is-left';
+  const cornerNE = document.createElement('div');
+  cornerNE.className = 'ew-html-preview-edge is-corner is-ne';
+  const cornerNW = document.createElement('div');
+  cornerNW.className = 'ew-html-preview-edge is-corner is-nw';
+  const cornerSE = document.createElement('div');
+  cornerSE.className = 'ew-html-preview-edge is-corner is-se';
+  const cornerSW = document.createElement('div');
+  cornerSW.className = 'ew-html-preview-edge is-corner is-sw';
+
+  body.append(placeholder, frame, edgeTop, edgeRight, edgeBottom, edgeLeft, cornerNE, cornerNW, cornerSE, cornerSW);
   let frameContextMenuHandler = null;
 
   const bindFrameContextMenu = (nodeId) => {

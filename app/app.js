@@ -460,6 +460,7 @@ let navFocusTimer = null;
 let serverAiProviders = new Set();
 let serverAiDefaultModels = new Map();
 let serverAiTaskModels = new Map();
+let htmlPreviewResizeSession = null;
 let lastSelectedNodeEl = null;
 let desktopRuntimeInfo = null;
 let desktopSettingsBusy = false;
@@ -1155,6 +1156,7 @@ if (view?.overlay) {
   view.overlay.addEventListener('pointerdown', captureResizeStart, true);
   view.overlay.addEventListener('pointerdown', captureDragStart, true);
 }
+installHtmlPreviewResizeSupport();
 window.addEventListener('pointerup', () => {
   if (!resizeSnapshot && !dragSnapshot) return;
   window.setTimeout(() => {
@@ -2254,6 +2256,108 @@ function captureDragStart() {
   };
 }
 
+function parseHtmlPreviewResizeEdges(edgeEl) {
+  if (!edgeEl) return [];
+  if (edgeEl.classList.contains('is-ne')) return ['top', 'right'];
+  if (edgeEl.classList.contains('is-nw')) return ['top', 'left'];
+  if (edgeEl.classList.contains('is-se')) return ['bottom', 'right'];
+  if (edgeEl.classList.contains('is-sw')) return ['bottom', 'left'];
+  if (edgeEl.classList.contains('is-top')) return ['top'];
+  if (edgeEl.classList.contains('is-right')) return ['right'];
+  if (edgeEl.classList.contains('is-bottom')) return ['bottom'];
+  if (edgeEl.classList.contains('is-left')) return ['left'];
+  return [];
+}
+
+function updateHtmlPreviewResize(clientX, clientY) {
+  const session = htmlPreviewResizeSession;
+  if (!session || !view?.graph) return;
+  const node = view.graph.getNode(session.nodeId);
+  if (!node) return;
+  const dx = clientX - session.startX;
+  const dy = clientY - session.startY;
+  let nextX = session.startNode.x;
+  let nextY = session.startNode.y;
+  let nextW = session.startNode.w;
+  let nextH = session.startNode.h;
+  if (session.edges.includes('right')) {
+    nextW = Math.max(session.minW, session.startNode.w + dx);
+  }
+  if (session.edges.includes('left')) {
+    nextW = Math.max(session.minW, session.startNode.w - dx);
+    nextX = session.startNode.x + (session.startNode.w - nextW);
+  }
+  if (session.edges.includes('bottom')) {
+    nextH = Math.max(session.minH, session.startNode.h + dy);
+  }
+  if (session.edges.includes('top')) {
+    nextH = Math.max(session.minH, session.startNode.h - dy);
+    nextY = session.startNode.y + (session.startNode.h - nextH);
+  }
+  view.updateNode(session.nodeId, { x: nextX, y: nextY, w: nextW, h: nextH });
+}
+
+function handleHtmlPreviewResizePointerDown(event) {
+  if (event.button !== 0) return;
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target) return;
+  const edgeEl = target.closest('.ew-html-preview-edge');
+  if (!(edgeEl instanceof HTMLElement)) return;
+  const nodeEl = edgeEl.closest('[data-ew-node-id]');
+  const nodeId = String(nodeEl?.getAttribute('data-ew-node-id') || '').trim();
+  if (!nodeId || !view?.graph) return;
+  const node = view.graph.getNode(nodeId);
+  if (!node) return;
+  const edges = parseHtmlPreviewResizeEdges(edgeEl);
+  if (!edges.length) return;
+  htmlPreviewResizeSession = {
+    nodeId,
+    edges,
+    startX: event.clientX,
+    startY: event.clientY,
+    startNode: {
+      x: Number(node.x) || 0,
+      y: Number(node.y) || 0,
+      w: Number(node.w) || 320,
+      h: Number(node.h) || 240
+    },
+    minW: 240,
+    minH: 160
+  };
+  event.preventDefault();
+  event.stopPropagation();
+  if (typeof event.stopImmediatePropagation === 'function') {
+    event.stopImmediatePropagation();
+  }
+}
+
+function handleHtmlPreviewResizePointerMove(event) {
+  if (!htmlPreviewResizeSession) return;
+  updateHtmlPreviewResize(event.clientX, event.clientY);
+  event.preventDefault();
+  event.stopPropagation();
+  if (typeof event.stopImmediatePropagation === 'function') {
+    event.stopImmediatePropagation();
+  }
+}
+
+function handleHtmlPreviewResizePointerUp(event) {
+  if (!htmlPreviewResizeSession) return;
+  updateHtmlPreviewResize(event.clientX, event.clientY);
+  htmlPreviewResizeSession = null;
+  event.preventDefault();
+  event.stopPropagation();
+  if (typeof event.stopImmediatePropagation === 'function') {
+    event.stopImmediatePropagation();
+  }
+}
+
+function installHtmlPreviewResizeSupport() {
+  window.addEventListener('pointerdown', handleHtmlPreviewResizePointerDown, true);
+  window.addEventListener('pointermove', handleHtmlPreviewResizePointerMove, true);
+  window.addEventListener('pointerup', handleHtmlPreviewResizePointerUp, true);
+}
+
 function commitDragSnapshot() {
   if (!dragSnapshot || !view.graph) return;
   const node = view.graph.getNode(dragSnapshot.id);
@@ -2647,6 +2751,19 @@ function syncHtmlPreviewFromLinkedCode(previewNodeId) {
 }
 
 window.elenweaveSyncHtmlPreview = syncHtmlPreviewFromLinkedCode;
+
+window.elenweaveResizeNode = ({ id, x, y, w, h } = {}) => {
+  if (!id || !view?.graph) return;
+  const node = view.graph.getNode(id);
+  if (!node) return;
+  const next = {};
+  if (Number.isFinite(x)) next.x = x;
+  if (Number.isFinite(y)) next.y = y;
+  if (Number.isFinite(w)) next.w = w;
+  if (Number.isFinite(h)) next.h = h;
+  if (!Object.keys(next).length) return;
+  view.updateNode(id, next);
+};
 
 function editNodeContextTarget() {
   const nodeId = nodeContextMenu.nodeId;
